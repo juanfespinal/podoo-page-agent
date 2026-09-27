@@ -5,8 +5,10 @@ import { Button } from '@/components/ui/button'
 import type { OdooPageContext } from '@/odoo/context'
 
 import { voiceInstructions } from './instructions'
+import { hasMicrophonePermission, openMicrophonePermissionTab } from './microphone-permission'
 
-type VoiceStatus = 'idle' | 'connecting' | 'listening' | 'speaking' | 'responding' | 'error'
+type VoiceStatus =
+	'idle' | 'permission' | 'connecting' | 'listening' | 'speaking' | 'responding' | 'error'
 
 interface RealtimeEvent {
 	type: string
@@ -24,6 +26,8 @@ function statusLabel(status: VoiceStatus): string {
 	switch (status) {
 		case 'connecting':
 			return 'Conectando la voz…'
+		case 'permission':
+			return 'Activa el micrófono en la pestaña que abrió Podoo.'
 		case 'listening':
 			return 'Te escucho. Habla con Podoo.'
 		case 'speaking':
@@ -83,14 +87,36 @@ export function VoicePanel({ context, onClose }: VoicePanelProps) {
 		setCaption('')
 	}
 
-	const start = async () => {
+	const start = useCallback(async () => {
 		if (status === 'connecting' || peerRef.current) return
 		setError(null)
 		setCaption('')
+		try {
+			if (!(await hasMicrophonePermission())) {
+				setStatus('permission')
+				await openMicrophonePermissionTab()
+				return
+			}
+		} catch (cause) {
+			setError(
+				`No se pudo abrir la pestaña del micrófono: ${cause instanceof Error ? cause.message : String(cause)}`
+			)
+			setStatus('error')
+			return
+		}
 		setStatus('connecting')
 		const abort = new AbortController()
 		abortRef.current = abort
 		try {
+			const stream = await navigator.mediaDevices.getUserMedia({
+				audio: { echoCancellation: true, noiseSuppression: true },
+			})
+			if (abort.signal.aborted) {
+				stream.getTracks().forEach((track) => track.stop())
+				return
+			}
+			streamRef.current = stream
+
 			const result = (await chrome.runtime.sendMessage({ type: 'PODOO_REALTIME_TOKEN' })) as {
 				token?: string
 				error?: string
@@ -111,14 +137,6 @@ export function VoicePanel({ context, onClose }: VoicePanelProps) {
 				}
 			}
 
-			const stream = await navigator.mediaDevices.getUserMedia({
-				audio: { echoCancellation: true, noiseSuppression: true },
-			})
-			if (abort.signal.aborted) {
-				stream.getTracks().forEach((track) => track.stop())
-				return
-			}
-			streamRef.current = stream
 			for (const track of stream.getAudioTracks()) {
 				track.enabled = false
 				peer.addTrack(track, stream)
@@ -202,11 +220,29 @@ export function VoicePanel({ context, onClose }: VoicePanelProps) {
 			abort.signal.throwIfAborted()
 		} catch (cause) {
 			if (abort.signal.aborted) return
-			setError(cause instanceof Error ? cause.message : String(cause))
+			setError(
+				cause instanceof DOMException && cause.name === 'NotAllowedError'
+					? 'Chrome bloqueó el micrófono. Pulsa Iniciar voz para abrir la pestaña de permisos.'
+					: cause instanceof Error
+						? cause.message
+						: String(cause)
+			)
 			setStatus('error')
 			closeConnection()
 		}
-	}
+	}, [status, closeConnection])
+
+	useEffect(() => {
+		const onMessage = (message: { type?: string }, sender: chrome.runtime.MessageSender) => {
+			if (
+				message.type === 'PODOO_MIC_PERMISSION_GRANTED' &&
+				sender.url === chrome.runtime.getURL('mic-permission.html')
+			)
+				void start()
+		}
+		chrome.runtime.onMessage.addListener(onMessage)
+		return () => chrome.runtime.onMessage.removeListener(onMessage)
+	}, [start])
 
 	return (
 		<section className="border-b bg-primary/5 px-4 py-4" aria-label="Prueba de voz en vivo">
@@ -234,17 +270,27 @@ export function VoicePanel({ context, onClose }: VoicePanelProps) {
 				<Button
 					type="button"
 					className="min-h-11"
-					variant={status === 'idle' || status === 'error' ? 'default' : 'outline'}
-					onClick={status === 'idle' || status === 'error' ? () => void start() : stop}
+					variant={
+						status === 'idle' || status === 'error' || status === 'permission'
+							? 'default'
+							: 'outline'
+					}
+					onClick={
+						status === 'idle' || status === 'error' || status === 'permission'
+							? () => void start()
+							: stop
+					}
 				>
 					{status === 'connecting' ? (
 						<LoaderCircle className="mr-2 size-4 animate-spin" />
-					) : status === 'idle' || status === 'error' ? (
+					) : status === 'idle' || status === 'error' || status === 'permission' ? (
 						<Mic className="mr-2 size-4" />
 					) : (
 						<MicOff className="mr-2 size-4" />
 					)}
-					{status === 'idle' || status === 'error' ? 'Iniciar voz' : 'Terminar voz'}
+					{status === 'idle' || status === 'error' || status === 'permission'
+						? 'Iniciar voz'
+						: 'Terminar voz'}
 				</Button>
 				<span className="text-xs text-muted-foreground" role="status">
 					{statusLabel(status)}

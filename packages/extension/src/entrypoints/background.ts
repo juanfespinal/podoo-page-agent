@@ -8,6 +8,10 @@ export default defineBackground(() => {
 	// message proxy
 
 	chrome.runtime.onMessage.addListener((message, sender, sendResponse): true | undefined => {
+		if (message.type === 'PODOO_MIC_PERMISSION_GRANTED') {
+			sendResponse({ ok: sender.url === chrome.runtime.getURL('mic-permission.html') })
+			return
+		}
 		if (message.type === 'PODOO_REALTIME_TOKEN') {
 			const sidepanelUrls = [
 				chrome.runtime.getURL('sidepanel.html'),

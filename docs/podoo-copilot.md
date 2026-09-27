@@ -11,7 +11,7 @@ This fork adds an Odoo-focused Chrome side panel to Page Agent. It uses the curr
 5. In **Configuración**, enter a model endpoint and API key approved for the Odoo data you will use. The upstream free testing endpoint is blocked for Podoo tasks.
 6. Optionally expand **Reglas de tu empresa** and add approved process rules. Rules are stored in Chrome local extension storage for that Odoo origin.
 7. Choose **Entender**, **Guiarme**, or **Hacer conmigo**, then ask about the open screen. You can ask follow-up questions in the same chat.
-8. To try live voice in the side panel, use an OpenAI API key with the base URL `https://api.openai.com/v1`, click the microphone icon, then **Iniciar voz**. Allow microphone access when Chrome asks. Click **Terminar voz** to close the Realtime session.
+8. To try live voice in the side panel, use an OpenAI API key with the base URL `https://api.openai.com/v1`, click the microphone icon, then **Iniciar voz**. The first time, Podoo opens a full extension tab: click **Permitir micrófono** there and allow access in Chrome. The tab closes and voice starts in the side panel. Click **Terminar voz** to close the Realtime session.
 
 The side panel reads the Odoo app, view, breadcrumbs, record title, and current URL path from the rendered page. Page Agent supplies the interactive DOM snapshot. It refreshes screen context as a task progresses. It stops when the tab stops being Odoo or moves to another Odoo origin.
 
