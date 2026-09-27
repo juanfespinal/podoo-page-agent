@@ -48,7 +48,7 @@ export default defineConfig({
 		permissions: ['tabs', 'tabGroups', 'sidePanel', 'storage'],
 		host_permissions: ['<all_urls>'],
 		icons: {
-			64: 'assets/page-agent-64.png',
+			64: 'assets/podoo-64.png',
 		},
 		action: {
 			default_title: '__MSG_extActionTitle__',

@@ -12,6 +12,7 @@ import type { LLMConfig } from '@page-agent/llms'
 import { useCallback, useEffect, useRef, useState } from 'react'
 
 import type { OdooMode } from '@/odoo/agent-tools'
+import type { ConversationTurn } from '@/odoo/conversation'
 
 import { MultiPageAgent } from './MultiPageAgent'
 import { DEMO_CONFIG, isTestingEndpoint, migrateLegacyEndpoint } from './constants'
@@ -40,7 +41,10 @@ export interface UseAgentResult {
 	config: ExtConfig | null
 	approval: string | null
 	taskError: string | null
-	execute: (task: string) => Promise<ExecutionResult>
+	execute: (
+		task: string,
+		conversation?: { origin: string; turns: ConversationTurn[] }
+	) => Promise<ExecutionResult>
 	stop: () => void
 	answerApproval: (approved: boolean) => void
 	configure: (config: ExtConfig) => Promise<void>
@@ -142,7 +146,7 @@ export function useAgent(): UseAgentResult {
 	}, [config, requestApproval, answerApproval])
 
 	const execute = useCallback(
-		async (task: string) => {
+		async (task: string, conversation?: { origin: string; turns: ConversationTurn[] }) => {
 			const agent = agentRef.current
 			if (!agent) throw new Error('Agent not initialized')
 
@@ -155,6 +159,7 @@ export function useAgent(): UseAgentResult {
 						'Configure an approved model endpoint in Settings before sending Odoo page data.'
 					)
 				}
+				if (conversation) agent.setConversationContext(conversation.origin, conversation.turns)
 				return await agent.execute(task)
 			} catch (error) {
 				setTaskError(error instanceof Error ? error.message : String(error))

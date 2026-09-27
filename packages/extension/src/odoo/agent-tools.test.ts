@@ -44,8 +44,8 @@ describe('Odoo tool permissions', () => {
 		const click = createOdooToolOverrides('assist', approval).click_element_by_index!
 		await expect(
 			click.execute.call(agent, { index: 7 }, { signal: new AbortController().signal })
-		).rejects.toThrow('declined')
-		expect(approval).toHaveBeenCalledWith('Click\n[7] button Save', expect.any(AbortSignal))
+		).rejects.toThrow('rechazó')
+		expect(approval).toHaveBeenCalledWith('Hacer clic en\n[7] button Save', expect.any(AbortSignal))
 		expect(pageController.clickElement).not.toHaveBeenCalled()
 	})
 
@@ -57,7 +57,7 @@ describe('Odoo tool permissions', () => {
 		const click = createOdooToolOverrides('assist', async () => true).click_element_by_index!
 		await expect(
 			click.execute.call(agent, { index: 7 }, { signal: new AbortController().signal })
-		).rejects.toThrow('screen changed')
+		).rejects.toThrow('pantalla de Odoo cambió')
 		expect(pageController.clickElement).not.toHaveBeenCalled()
 	})
 
@@ -69,7 +69,7 @@ describe('Odoo tool permissions', () => {
 		const click = createOdooToolOverrides('assist', async () => true).click_element_by_index!
 		await expect(
 			click.execute.call(agent, { index: 7 }, { signal: new AbortController().signal })
-		).rejects.toThrow('page changed')
+		).rejects.toThrow('página de Odoo cambió')
 		expect(pageController.clickElement).not.toHaveBeenCalled()
 	})
 })

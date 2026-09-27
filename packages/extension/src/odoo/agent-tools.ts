@@ -29,26 +29,26 @@ async function approveIndexedAction(
 	requestApproval: RequestApproval | undefined,
 	{ signal }: ToolContext
 ): Promise<void> {
-	if (!requestApproval) throw new Error('Assisted actions require the Podoo approval panel.')
+	if (!requestApproval) throw new Error('Las acciones asistidas requieren el panel de aprobación.')
 	const controller = agent.pageController as typeof agent.pageController & {
 		getOdooContext: () => Promise<OdooPageContext | null>
 	}
 	const screenBefore = await controller.getOdooContext()
-	if (!screenBefore) throw new Error('The current tab is no longer an Odoo web client.')
+	if (!screenBefore) throw new Error('La pestaña actual ya no muestra Odoo.')
 	const before = indexedLine((await controller.getBrowserState()).content, index)
 	if (!before)
-		throw new Error(`Control ${index} is no longer visible. Observe the Odoo page again.`)
+		throw new Error(`El control ${index} ya no está visible. Revisa la pantalla de Odoo.`)
 	if (!(await requestApproval(`${verb}\n${before}`, signal))) {
-		throw new Error('The user declined this Odoo action.')
+		throw new Error('El usuario rechazó esta acción de Odoo.')
 	}
 	signal.throwIfAborted()
 	const screenAfter = await controller.getOdooContext()
 	if (JSON.stringify(screenAfter) !== JSON.stringify(screenBefore)) {
-		throw new Error('The Odoo screen changed while approval was pending. Observe it again.')
+		throw new Error('La pantalla de Odoo cambió mientras esperábamos la aprobación.')
 	}
 	const after = indexedLine((await controller.getBrowserState()).content, index)
 	if (after !== before) {
-		throw new Error('The Odoo page changed while approval was pending. Observe it again.')
+		throw new Error('La página de Odoo cambió mientras esperábamos la aprobación.')
 	}
 }
 
@@ -74,7 +74,7 @@ export function createOdooToolOverrides(
 			description: 'Click an Odoo control after the user approves the exact target.',
 			inputSchema: z.object({ index: z.int().min(0) }),
 			async execute(input: { index: number }, context) {
-				await approveIndexedAction(this, input.index, 'Click', requestApproval, context)
+				await approveIndexedAction(this, input.index, 'Hacer clic en', requestApproval, context)
 				return (await this.pageController.clickElement(input.index)).message
 			},
 		},
@@ -85,7 +85,7 @@ export function createOdooToolOverrides(
 				await approveIndexedAction(
 					this,
 					input.index,
-					`Type ${JSON.stringify(input.text)} into`,
+					`Escribir ${JSON.stringify(input.text)} en`,
 					requestApproval,
 					context
 				)
@@ -99,7 +99,7 @@ export function createOdooToolOverrides(
 				await approveIndexedAction(
 					this,
 					input.index,
-					`Select ${JSON.stringify(input.text)} in`,
+					`Seleccionar ${JSON.stringify(input.text)} en`,
 					requestApproval,
 					context
 				)

@@ -8,19 +8,21 @@ This fork adds an Odoo-focused Chrome side panel to Page Agent. It uses the curr
 2. Run `npm ci`, then `npm run build:ext` from the repository root.
 3. In Chrome, open `chrome://extensions`, enable Developer mode, choose **Load unpacked**, and select `packages/extension/.output/chrome-mv3`.
 4. Open an Odoo web client tab and click the extension icon.
-5. In **Settings**, enter a model endpoint and API key approved for the Odoo data you will use. The upstream free testing endpoint is blocked for Podoo tasks.
-6. Add any company process rules in the side panel and press **Save**. Rules are stored in Chrome local extension storage for that Odoo origin.
-7. Choose **Explain**, **Guide**, or **Assist**, then ask about the open screen.
+5. In **Configuración**, enter a model endpoint and API key approved for the Odoo data you will use. The upstream free testing endpoint is blocked for Podoo tasks.
+6. Optionally expand **Reglas de tu empresa** and add approved process rules. Rules are stored in Chrome local extension storage for that Odoo origin.
+7. Choose **Entender**, **Guiarme**, or **Hacer conmigo**, then ask about the open screen. You can ask follow-up questions in the same chat.
 
 The side panel reads the Odoo app, view, breadcrumbs, record title, and current URL path from the rendered page. Page Agent supplies the interactive DOM snapshot. It refreshes screen context as a task progresses. It stops when the tab stops being Odoo or moves to another Odoo origin.
 
 ## Modes
 
-| Mode    | Behavior                                                                                                                                                                  |
-| ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Explain | Answers questions about the current screen. Page-changing tools are unavailable.                                                                                          |
-| Guide   | Suggests a concrete next step for the user. Page-changing tools are unavailable.                                                                                          |
-| Assist  | Can click and edit fields. The side panel asks for approval of each target and entered value before acting. It checks the screen and indexed target again after approval. |
+| Mode (UI)     | Behavior                                                                                                                                                             |
+| ------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Entender      | Explains the current screen and its purpose. Page-changing tools are unavailable.                                                                                    |
+| Guiarme       | Gives one concrete next step for the user to perform. Page-changing tools are unavailable.                                                                           |
+| Hacer conmigo | Can click and edit fields. The panel asks for approval of each target and entered value before acting. It checks the screen and indexed target again after approval. |
+
+The chat is saved locally per Odoo origin, so reopening the side panel restores the conversation for that instance. Podoo sends a bounded window of recent turns to the model for follow-up questions. Previous replies are context, not proof that an action occurred; the current Odoo screen is checked again for every task. **Nueva conversación** clears the chat for the current origin. The task trace remains separately available in **Registro de tareas**.
 
 Tab switching, opening, and closing tools are unavailable in all three modes. The upstream page-to-extension execution bridge is disabled in this fork so page scripts cannot bypass the side panel approvals.
 
@@ -29,13 +31,13 @@ Tab switching, opening, and closing tools are unavailable in all three modes. Th
 ```text
 Odoo rendered page → Odoo context + Page Agent DOM snapshot
                          ↓
-            Company rules for this Odoo origin
+       Company rules + recent chat for this origin
                          ↓
                  Page Agent reasoning
                          ↓
-        Explain / Guide / approval-gated Assist
+   Entender / Guiarme / approval-gated Hacer conmigo
 ```
 
-This is an extension prototype with no Hermes dependency or planned Hermes integration. It does not yet connect to an Odoo server addon, a versioned knowledge base, or Jev. Company rules are manually entered text; there is no retrieval, source citation, role-aware policy, or typed Odoo RPC. DOM automation can miss custom widgets and cannot prove a business transaction succeeded. For a production adoption copilot, the next integration should be a standalone Odoo addon owned by this project. It can provide model, record, user role, approved workflow, and cited knowledge for the current screen. High-impact changes should use explicit Odoo operations with a confirmation step and an auditable result. Jev can remain an optional browser execution service for supported workflows.
+This is an extension prototype with no Hermes or Jev dependency. It does not yet connect to an Odoo server addon or a versioned knowledge base. Company rules are manually entered text; there is no retrieval, source citation, role-aware policy, or typed Odoo RPC. DOM automation can miss custom widgets and cannot prove a business transaction succeeded. For a production adoption copilot, the next integration should be a standalone Odoo addon owned by this project. It can provide model, record, user role, approved workflow, and cited knowledge for the current screen. High-impact changes should use explicit Odoo operations with a confirmation step and an auditable result.
 
 The design was informed by the user's previous `odoo-page-agent-jev-pack.zip` reference. The archive was treated as design input; no code or instructions from it were copied into this fork.
