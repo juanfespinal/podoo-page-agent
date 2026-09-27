@@ -1,11 +1,11 @@
 {
     "extName": {
-        "message": "Page Agent Ext"
+        "message": "Podoo Copilot"
     },
     "extDescription": {
-        "message": "AI-powered browser automation assistant. Control web pages with natural language."
+        "message": "Odoo adoption copilot with screen context, company guidance, and approved actions."
     },
     "extActionTitle": {
-        "message": "Open Page Agent"
+        "message": "Open Podoo Copilot"
     }
 }

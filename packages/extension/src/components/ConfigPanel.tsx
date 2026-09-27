@@ -1,7 +1,5 @@
 import {
-	Copy,
 	CornerUpLeft,
-	ExternalLink,
 	Eye,
 	EyeOff,
 	FoldVertical,
@@ -11,7 +9,7 @@ import {
 	Scale,
 	UnfoldVertical,
 } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { siGithub } from 'simple-icons'
 
 import { DEMO_BASE_URL, DEMO_MODEL, isTestingEndpoint } from '@/agent/constants'
@@ -44,9 +42,6 @@ export function ConfigPanel({ config, onSave, onClose }: ConfigPanelProps) {
 	)
 	const [advancedOpen, setAdvancedOpen] = useState(false)
 	const [saving, setSaving] = useState(false)
-	const [userAuthToken, setUserAuthToken] = useState('')
-	const [copied, setCopied] = useState(false)
-	const [showToken, setShowToken] = useState(false)
 	const [showApiKey, setShowApiKey] = useState(false)
 
 	const [prevConfig, setPrevConfig] = useState(config)
@@ -63,38 +58,6 @@ export function ConfigPanel({ config, onSave, onClose }: ConfigPanelProps) {
 		setDisableNamedToolChoice(config?.disableNamedToolChoice ?? false)
 	}
 
-	// Poll for user auth token every second until found
-	useEffect(() => {
-		let interval: NodeJS.Timeout | null = null
-
-		const fetchToken = async () => {
-			const result = await chrome.storage.local.get('PageAgentExtUserAuthToken')
-			const token = result.PageAgentExtUserAuthToken
-			if (typeof token === 'string' && token) {
-				setUserAuthToken(token)
-				if (interval) {
-					clearInterval(interval)
-					interval = null
-				}
-			}
-		}
-
-		fetchToken()
-		interval = setInterval(fetchToken, 1000)
-
-		return () => {
-			if (interval) clearInterval(interval)
-		}
-	}, [])
-
-	const handleCopyToken = async () => {
-		if (userAuthToken) {
-			await navigator.clipboard.writeText(userAuthToken)
-			setCopied(true)
-			setTimeout(() => setCopied(false), 2000)
-		}
-	}
-
 	const handleSave = async () => {
 		setSaving(true)
 		try {
@@ -108,6 +71,7 @@ export function ConfigPanel({ config, onSave, onClose }: ConfigPanelProps) {
 				experimentalLlmsTxt,
 				experimentalIncludeAllTabs,
 				disableNamedToolChoice,
+				odooMode: config?.odooMode ?? 'explain',
 			})
 		} finally {
 			setSaving(false)
@@ -128,65 +92,6 @@ export function ConfigPanel({ config, onSave, onClose }: ConfigPanelProps) {
 					<CornerUpLeft className="size-3.5" />
 				</Button>
 			</div>
-
-			{/* User Auth Token Section */}
-			<div className="flex flex-col gap-1.5 p-3 bg-muted/50 rounded-md border">
-				<label htmlFor="user-auth-token" className="text-xs font-medium text-muted-foreground">
-					User Auth Token
-				</label>
-				<p className="text-[10px] text-muted-foreground mb-1">
-					Give a website the ability to call this extension.
-				</p>
-				<div className="flex gap-2 items-center">
-					<Input
-						id="user-auth-token"
-						readOnly
-						value={
-							userAuthToken
-								? showToken
-									? userAuthToken
-									: `${userAuthToken.slice(0, 4)}${'•'.repeat(userAuthToken.length - 8)}${userAuthToken.slice(-4)}`
-								: 'Loading...'
-						}
-						className="text-xs h-8 font-mono bg-background"
-					/>
-					<Button
-						variant="outline"
-						size="icon"
-						className="h-8 w-8 shrink-0 cursor-pointer"
-						onClick={() => setShowToken(!showToken)}
-						disabled={!userAuthToken}
-						aria-label={showToken ? 'Hide token' : 'Show token'}
-						aria-pressed={showToken}
-					>
-						{showToken ? <EyeOff className="size-3" /> : <Eye className="size-3" />}
-					</Button>
-					<Button
-						variant="outline"
-						size="icon"
-						className="h-8 w-8 shrink-0 cursor-pointer"
-						onClick={handleCopyToken}
-						disabled={!userAuthToken}
-						aria-label="Copy token"
-					>
-						{copied ? <span className="">✓</span> : <Copy className="size-3" />}
-					</Button>
-					<span role="status" aria-live="polite" aria-atomic="true" className="sr-only">
-						{copied ? 'Token copied' : ''}
-					</span>
-				</div>
-			</div>
-
-			{/* Hub link */}
-			<a
-				href="/hub.html"
-				target="_blank"
-				rel="noopener noreferrer"
-				className="flex items-center justify-between p-3 rounded-md border bg-muted/50 text-xs font-medium text-muted-foreground hover:text-foreground hover:border-foreground/20 transition-colors"
-			>
-				Manage Page Agent Hub
-				<ExternalLink className="size-3" />
-			</a>
 
 			<div className="flex flex-col gap-1.5">
 				<label htmlFor="base-url" className="text-xs text-muted-foreground">

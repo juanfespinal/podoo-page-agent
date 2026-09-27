@@ -3,6 +3,8 @@
  */
 import { PageController } from '@page-agent/page-controller'
 
+import { readOdooContext } from '@/odoo/context'
+
 export function initPageController() {
 	let pageController: PageController | null = null
 	let intervalID: number | null = null
@@ -72,6 +74,9 @@ export function initPageController() {
 		const pc = getPC() as any
 
 		switch (action) {
+			case 'get_odoo_context':
+				sendResponse(readOdooContext(document, new URL(window.location.href)))
+				break
 			case 'get_last_update_time':
 			case 'get_browser_state':
 			case 'update_tree':

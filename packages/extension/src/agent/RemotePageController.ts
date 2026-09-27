@@ -1,5 +1,7 @@
 import type { BrowserState } from '@page-agent/page-controller'
 
+import type { OdooPageContext } from '@/odoo/context'
+
 import type { TabsController } from './TabsController'
 
 const PREFIX = '[RemotePageController]'
@@ -44,6 +46,18 @@ export class RemotePageController {
 		if (!this.currentTabId) return ''
 		const { title } = await this.tabsController.getTabInfo(this.currentTabId)
 		return title || ''
+	}
+
+	async getOdooContext(): Promise<OdooPageContext | null> {
+		if (!this.currentTabId || !isContentScriptAllowed(await this.getCurrentUrl())) return null
+		const response = await sendMessage({
+			type: 'PAGE_CONTROL',
+			action: 'get_odoo_context',
+			targetTabId: this.currentTabId,
+		})
+		if (response?.success === false)
+			throw new Error(response.error || 'Could not read Odoo context')
+		return response as OdooPageContext | null
 	}
 
 	async getLastUpdateTime(): Promise<number> {

@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { ConfigPanel } from '@/components/ConfigPanel'
 import { HistoryDetail } from '@/components/HistoryDetail'
 import { HistoryList } from '@/components/HistoryList'
+import { OdooContextPanel } from '@/components/OdooContextPanel'
 import { ActivityCard, EventCard } from '@/components/cards'
 import { EmptyState, Logo, MotionOverlay, StatusDot } from '@/components/misc'
 import { Button } from '@/components/ui/button'
@@ -14,6 +15,7 @@ import {
 	InputGroupTextarea,
 } from '@/components/ui/input-group'
 import { saveSession } from '@/lib/db'
+import type { OdooMode } from '@/odoo/agent-tools'
 
 import { useAgent } from '../../agent/useAgent'
 
@@ -29,7 +31,27 @@ export default function App() {
 	const historyRef = useRef<HTMLDivElement>(null)
 	const textareaRef = useRef<HTMLTextAreaElement>(null)
 
-	const { status, history, activity, currentTask, config, execute, stop, configure } = useAgent()
+	const {
+		status,
+		history,
+		activity,
+		currentTask,
+		config,
+		approval,
+		taskError,
+		execute,
+		stop,
+		answerApproval,
+		configure,
+	} = useAgent()
+	const mode = config?.odooMode ?? 'explain'
+	const isRunning = status === 'running'
+	const changeMode = useCallback(
+		(next: OdooMode) => {
+			if (config && status !== 'running') void configure({ ...config, odooMode: next })
+		},
+		[config, configure, status]
+	)
 
 	// Persist session when task finishes
 	const prevStatusRef = useRef(status)
@@ -128,7 +150,6 @@ export default function App() {
 
 	// --- Chat view ---
 
-	const isRunning = status === 'running'
 	const showEmptyState = !currentTask && history.length === 0 && !isRunning
 
 	return (
@@ -138,13 +159,14 @@ export default function App() {
 			<header className="flex items-center justify-between border-b px-3 py-2">
 				<div className="flex items-center gap-2">
 					<Logo className="size-5" />
-					<span className="text-sm font-medium">Page Agent Ext</span>
+					<span className="text-sm font-medium">Podoo Copilot</span>
 				</div>
 				<div className="flex items-center gap-1">
 					<StatusDot status={status} />
 					<Button
 						variant="ghost"
 						size="icon-sm"
+						disabled={isRunning}
 						onClick={() => setView({ name: 'history' })}
 						className="cursor-pointer"
 						aria-label="History"
@@ -155,6 +177,7 @@ export default function App() {
 					<Button
 						variant="ghost"
 						size="icon-sm"
+						disabled={isRunning}
 						onClick={() => setView({ name: 'config' })}
 						className="cursor-pointer"
 						aria-label="Settings"
@@ -164,6 +187,51 @@ export default function App() {
 					</Button>
 				</div>
 			</header>
+			<OdooContextPanel />
+			<div className="flex gap-1 border-b px-3 py-2" role="group" aria-label="Copilot mode">
+				{(['explain', 'guide', 'assist'] as const).map((option) => (
+					<Button
+						key={option}
+						variant={mode === option ? 'default' : 'outline'}
+						size="sm"
+						className="flex-1 capitalize"
+						disabled={!config || isRunning}
+						onClick={() => changeMode(option)}
+					>
+						{option}
+					</Button>
+				))}
+			</div>
+			<p className="border-b px-3 py-1 text-[11px] text-muted-foreground">
+				{mode === 'assist'
+					? 'Each click or field change needs your approval.'
+					: mode === 'guide'
+						? 'Get the next step to take yourself.'
+						: 'Ask what this screen means.'}
+			</p>
+			{taskError && (
+				<div role="alert" className="border-b px-3 py-2 text-xs text-destructive">
+					{taskError}
+				</div>
+			)}
+			{approval && (
+				<div
+					className="border-b bg-muted/40 px-3 py-3 text-xs space-y-2"
+					role="alertdialog"
+					aria-label="Approve Odoo action"
+				>
+					<strong>Approve this action?</strong>
+					<p className="whitespace-pre-wrap break-words">{approval}</p>
+					<div className="flex gap-2">
+						<Button size="sm" onClick={() => answerApproval(true)}>
+							Approve
+						</Button>
+						<Button size="sm" variant="outline" onClick={() => answerApproval(false)}>
+							Decline
+						</Button>
+					</div>
+				</div>
+			)}
 
 			{/* Content */}
 			<main className="flex-1 overflow-hidden flex flex-col">
