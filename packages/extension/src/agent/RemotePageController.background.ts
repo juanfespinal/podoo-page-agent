@@ -2,6 +2,7 @@
  * background logics for RemotePageController
  * - redirect messages from RemotePageController(Agent, extension pages) to ContentScript
  */
+import { CONTENT_SCRIPT_MISSING, isMissingContentScript } from './pageControlErrors'
 
 export function handlePageControlMessage(
 	message: { type: 'PAGE_CONTROL'; action: string; payload: any; targetTabId: number },
@@ -31,10 +32,11 @@ export function handlePageControlMessage(
 			sendResponse(result)
 		})
 		.catch((error) => {
-			// Probing a tab without an injected content script is an expected Odoo-context miss.
-			if (action !== 'get_odoo_context') console.error(PREFIX, error)
+			const missingContentScript = isMissingContentScript(error)
+			if (!missingContentScript && action !== 'get_odoo_context') console.error(PREFIX, error)
 			sendResponse({
 				success: false,
+				...(missingContentScript ? { code: CONTENT_SCRIPT_MISSING } : {}),
 				error: error instanceof Error ? error.message : String(error),
 			})
 		})

@@ -3,6 +3,7 @@ import type { BrowserState } from '@page-agent/page-controller'
 import type { OdooPageContext } from '@/odoo/context'
 
 import type { TabsController } from './TabsController'
+import { pageControlError } from './pageControlErrors'
 
 const PREFIX = '[RemotePageController]'
 
@@ -55,8 +56,7 @@ export class RemotePageController {
 			action: 'get_odoo_context',
 			targetTabId: this.currentTabId,
 		})
-		if (response?.success === false)
-			throw new Error(response.error || 'Could not read Odoo context')
+		if (!response || response.success === false) throw pageControlError(response)
 		return response as OdooPageContext | null
 	}
 
@@ -85,11 +85,13 @@ export class RemotePageController {
 				footer: '',
 			}
 		} else {
-			browserState = await sendMessage({
+			const response = await sendMessage({
 				type: 'PAGE_CONTROL',
 				action: 'get_browser_state',
 				targetTabId: this.currentTabId,
 			})
+			if (!response || response.success === false) throw pageControlError(response)
+			browserState = response
 		}
 
 		const sum = await this.tabsController.summarizeTabs()

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 
+import { CONTENT_SCRIPT_MISSING, RELOAD_ODOO_TAB_MESSAGE } from '@/agent/pageControlErrors'
 import { Button } from '@/components/ui/button'
 import { type OdooPageContext, companyRulesStorageKey } from '@/odoo/context'
 
@@ -26,7 +27,11 @@ export function OdooContextPanel() {
 			})
 			if (!response || response.success === false) {
 				setContext(null)
-				setMessage('Open an Odoo web client tab, then refresh.')
+				setMessage(
+					response?.code === CONTENT_SCRIPT_MISSING
+						? RELOAD_ODOO_TAB_MESSAGE
+						: 'Open an Odoo web client tab, then refresh.'
+				)
 				return
 			}
 			const next = response as OdooPageContext
