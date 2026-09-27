@@ -39,6 +39,7 @@ export function OdooContextPanel({
 	const refresh = useCallback(async () => {
 		try {
 			const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true })
+			if (tab?.url === chrome.runtime.getURL('mic-permission.html')) return
 			if (!tab?.id || !/^https?:\/\//.test(tab.url ?? '')) {
 				updateContext(null)
 				setMessage('Abre Odoo en esta ventana para empezar.')

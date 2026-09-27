@@ -4,10 +4,15 @@
 import { PageController } from '@page-agent/page-controller'
 
 import { readOdooContext } from '@/odoo/context'
+import { resolveAnalyticGuideStep } from '@/voice/analytic-guide'
+import { GuideOverlay } from '@/voice/guide-overlay'
 
 export function initPageController() {
 	let pageController: PageController | null = null
 	let intervalID: number | null = null
+	const guideOverlay = new GuideOverlay()
+	let guideSaveClicked = false
+	let guideNewFormObserved = false
 
 	const myTabIdPromise = chrome.runtime
 		.sendMessage({ type: 'PAGE_CONTROL', action: 'get_my_tab_id' })
@@ -74,6 +79,33 @@ export function initPageController() {
 		const pc = getPC() as any
 
 		switch (action) {
+			case 'guide_analytic_reset':
+				guideSaveClicked = false
+				guideNewFormObserved = false
+				guideOverlay.clear()
+				sendResponse({ success: true })
+				break
+			case 'guide_analytic_clear':
+				guideOverlay.clear()
+				sendResponse({ success: true })
+				break
+			case 'guide_analytic_step': {
+				const match = resolveAnalyticGuideStep(document, new URL(window.location.href), {
+					saveWasClicked: guideSaveClicked,
+					newFormObserved: guideNewFormObserved,
+				})
+				if (match.step.key === 'name') guideNewFormObserved = true
+				if (match.target) {
+					guideOverlay.show(match.step, match.target, () => {
+						if (match.step.key === 'new') guideNewFormObserved = true
+						if (match.step.key === 'save') guideSaveClicked = true
+					})
+				} else {
+					guideOverlay.clear()
+				}
+				sendResponse(match.step)
+				break
+			}
 			case 'get_odoo_context':
 				sendResponse(readOdooContext(document, new URL(window.location.href)))
 				break

@@ -4,6 +4,8 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import type { OdooPageContext } from '@/odoo/context'
 
+import type { AnalyticGuideStep } from './analytic-guide'
+import { activeOdooTabId, guideMessage } from './guide-client'
 import { voiceInstructions } from './instructions'
 import { hasMicrophonePermission, openMicrophonePermissionTab } from './microphone-permission'
 
@@ -46,12 +48,44 @@ export function VoicePanel({ context, onClose }: VoicePanelProps) {
 	const [error, setError] = useState<string | null>(null)
 	const [caption, setCaption] = useState('')
 	const [lastAnswer, setLastAnswer] = useState('')
+	const [guideStep, setGuideStep] = useState<AnalyticGuideStep | null>(null)
 	const peerRef = useRef<RTCPeerConnection | null>(null)
 	const channelRef = useRef<RTCDataChannel | null>(null)
 	const streamRef = useRef<MediaStream | null>(null)
 	const audioRef = useRef<HTMLAudioElement>(null)
 	const abortRef = useRef<AbortController | null>(null)
-	const instructionsRef = useRef(voiceInstructions(context))
+	const guideStepRef = useRef<AnalyticGuideStep | null>(null)
+	const pendingAnnouncementRef = useRef<AnalyticGuideStep | null>(null)
+	const respondingRef = useRef(false)
+	const sessionReadyRef = useRef(false)
+	const instructionsRef = useRef(voiceInstructions(context, null))
+	const guideTabRef = useRef<number | null>(null)
+
+	const announceStep = useCallback(() => {
+		const channel = channelRef.current
+		const step = pendingAnnouncementRef.current
+		if (
+			!step ||
+			!sessionReadyRef.current ||
+			respondingRef.current ||
+			channel?.readyState !== 'open'
+		)
+			return
+		pendingAnnouncementRef.current = null
+		respondingRef.current = true
+		channel.send(
+			JSON.stringify({
+				type: 'response.create',
+				response: {
+					output_modalities: ['audio'],
+					instructions:
+						step.state === 'target'
+							? `Di en una sola frase cuál es el control resaltado: ${step.instruction} Luego espera.`
+							: `Di brevemente: ${step.instruction} Luego espera.`,
+				},
+			})
+		)
+	}, [])
 
 	const closeConnection = useCallback(() => {
 		abortRef.current?.abort()
@@ -62,12 +96,64 @@ export function VoicePanel({ context, onClose }: VoicePanelProps) {
 		peerRef.current = null
 		streamRef.current?.getTracks().forEach((track) => track.stop())
 		streamRef.current = null
+		sessionReadyRef.current = false
+		respondingRef.current = false
+		pendingAnnouncementRef.current = null
 		if (audioRef.current) audioRef.current.srcObject = null
 	}, [])
 
 	useEffect(() => closeConnection, [closeConnection])
 	useEffect(() => {
-		const nextInstructions = voiceInstructions(context)
+		let active = true
+		let polling = false
+		const poll = async () => {
+			if (polling) return
+			polling = true
+			try {
+				const tabId = await activeOdooTabId(context.origin)
+				if (!active || tabId === null) return
+				if (guideTabRef.current !== tabId) {
+					if (guideTabRef.current !== null)
+						void guideMessage(guideTabRef.current, 'guide_analytic_clear')
+					guideTabRef.current = tabId
+					await guideMessage(tabId, 'guide_analytic_reset')
+				}
+				const step = await guideMessage(tabId, 'guide_analytic_step')
+				if (!active) return
+				const currentStep = step ?? {
+					key: 'unavailable',
+					label: 'Sin conexión con la pantalla',
+					instruction: 'Recarga la pestaña de Odoo y vuelve a abrir la guía.',
+					state: 'blocked' as const,
+				}
+				const previous = guideStepRef.current
+				if (
+					previous?.key === currentStep.key &&
+					previous.label === currentStep.label &&
+					previous.instruction === currentStep.instruction
+				)
+					return
+				guideStepRef.current = currentStep
+				setGuideStep(currentStep)
+				pendingAnnouncementRef.current = currentStep
+			} catch {
+				if (active) setGuideStep(null)
+			} finally {
+				polling = false
+			}
+		}
+		void poll()
+		const timer = window.setInterval(() => void poll(), 850)
+		return () => {
+			active = false
+			window.clearInterval(timer)
+			if (guideTabRef.current !== null)
+				void guideMessage(guideTabRef.current, 'guide_analytic_clear')
+			guideTabRef.current = null
+		}
+	}, [context.origin])
+	useEffect(() => {
+		const nextInstructions = voiceInstructions(context, guideStep)
 		if (nextInstructions === instructionsRef.current) return
 		instructionsRef.current = nextInstructions
 		const channel = channelRef.current
@@ -79,7 +165,7 @@ export function VoicePanel({ context, onClose }: VoicePanelProps) {
 				})
 			)
 		}
-	}, [context])
+	}, [context, guideStep])
 
 	const stop = () => {
 		closeConnection()
@@ -105,6 +191,7 @@ export function VoicePanel({ context, onClose }: VoicePanelProps) {
 			return
 		}
 		setStatus('connecting')
+		pendingAnnouncementRef.current = guideStepRef.current
 		const abort = new AbortController()
 		abortRef.current = abort
 		try {
@@ -170,19 +257,24 @@ export function VoicePanel({ context, onClose }: VoicePanelProps) {
 				}
 				switch (event.type) {
 					case 'session.updated':
+						sessionReadyRef.current = true
 						streamRef.current?.getAudioTracks().forEach((track) => {
 							track.enabled = true
 						})
 						setStatus('listening')
+						announceStep()
 						break
 					case 'response.done':
+						respondingRef.current = false
 						setStatus('listening')
+						announceStep()
 						break
 					case 'input_audio_buffer.speech_started':
 						setStatus('speaking')
 						break
 					case 'input_audio_buffer.speech_stopped':
 					case 'response.created':
+						respondingRef.current = true
 						setStatus('responding')
 						break
 					case 'response.output_audio_transcript.delta':
@@ -230,7 +322,7 @@ export function VoicePanel({ context, onClose }: VoicePanelProps) {
 			setStatus('error')
 			closeConnection()
 		}
-	}, [status, closeConnection])
+	}, [status, closeConnection, announceStep])
 
 	useEffect(() => {
 		const onMessage = (message: { type?: string }, sender: chrome.runtime.MessageSender) => {
@@ -253,7 +345,7 @@ export function VoicePanel({ context, onClose }: VoicePanelProps) {
 						<Headphones className="size-4 text-primary" /> Voz en vivo · Realtime 2.1
 					</div>
 					<p className="mt-1 text-xs text-muted-foreground">
-						Prueba explicativa: conversa sobre cuentas analíticas. La voz no modifica Odoo.
+						Guía visual para cuentas analíticas. Tú haces clic; Podoo señala el control.
 					</p>
 				</div>
 				<Button
@@ -265,6 +357,15 @@ export function VoicePanel({ context, onClose }: VoicePanelProps) {
 				>
 					<X className="size-4" />
 				</Button>
+			</div>
+			<div className="mt-3 rounded-xl border border-primary/30 bg-card p-3" aria-live="polite">
+				<p className="text-[11px] font-semibold uppercase tracking-wide text-primary">
+					{guideStep?.state === 'target' ? 'Siguiente clic en Odoo' : 'Guía en Odoo'}
+				</p>
+				<p className="mt-1 text-sm font-semibold">
+					{guideStep?.label ?? 'Preparando el siguiente paso…'}
+				</p>
+				<p className="mt-1 text-xs text-muted-foreground">{guideStep?.instruction}</p>
 			</div>
 			<div className="mt-3 flex items-center gap-2">
 				<Button
