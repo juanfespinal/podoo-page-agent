@@ -1,4 +1,8 @@
-import type { AnalyticGuideStep } from './analytic-guide'
+export interface GuideTarget {
+	key: string
+	label: string
+	instruction: string
+}
 
 /** A passive, leased coachmark. It does not intercept clicks on Odoo. */
 export class GuideOverlay {
@@ -10,8 +14,9 @@ export class GuideOverlay {
 	private refreshedAt = 0
 	private timer: number | null = null
 	private onClick: ((event: MouseEvent) => void) | null = null
+	private onChange: ((event: Event) => void) | null = null
 
-	show(step: AnalyticGuideStep, element: HTMLElement, onTargetClick: () => void): void {
+	show(step: GuideTarget, element: HTMLElement, onTargetUsed: () => void): void {
 		this.refreshedAt = Date.now()
 		if (this.target === element && this.key === step.key && this.host?.isConnected) return
 		this.clear()
@@ -40,12 +45,26 @@ export class GuideOverlay {
 		this.position()
 		this.onClick = (event) => {
 			if (this.target && event.target instanceof Node && this.target.contains(event.target)) {
-				onTargetClick()
+				const isEditable =
+					this.target.matches('input, textarea, select, [contenteditable="true"]') ||
+					Boolean(this.target.querySelector('input, textarea, select, [contenteditable="true"]'))
+				if (!isEditable) {
+					this.clear()
+					onTargetUsed()
+				}
 			}
 		}
 		document.addEventListener('click', this.onClick, true)
+		const onChange = (event: Event) => {
+			if (this.target && event.target instanceof Node && this.target.contains(event.target)) {
+				this.clear()
+				onTargetUsed()
+			}
+		}
+		document.addEventListener('change', onChange, true)
+		this.onChange = onChange
 		this.timer = window.setInterval(() => {
-			if (Date.now() - this.refreshedAt > 3000 || !this.target?.isConnected) {
+			if (Date.now() - this.refreshedAt > 120000 || !this.target?.isConnected) {
 				this.clear()
 				return
 			}
@@ -56,6 +75,7 @@ export class GuideOverlay {
 	clear(): void {
 		if (this.timer !== null) window.clearInterval(this.timer)
 		if (this.onClick) document.removeEventListener('click', this.onClick, true)
+		if (this.onChange) document.removeEventListener('change', this.onChange, true)
 		this.host?.remove()
 		this.host = null
 		this.ring = null
@@ -64,6 +84,7 @@ export class GuideOverlay {
 		this.key = ''
 		this.timer = null
 		this.onClick = null
+		this.onChange = null
 	}
 
 	private position(): void {

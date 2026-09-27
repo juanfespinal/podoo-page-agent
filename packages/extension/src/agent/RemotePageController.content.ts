@@ -4,15 +4,19 @@
 import { PageController } from '@page-agent/page-controller'
 
 import { readOdooContext } from '@/odoo/context'
-import { resolveAnalyticGuideStep } from '@/voice/analytic-guide'
 import { GuideOverlay } from '@/voice/guide-overlay'
+import {
+	type GuideSnapshot,
+	assertHighlightSelection,
+	indexedControls,
+} from '@/voice/guide-validation'
 
 export function initPageController() {
 	let pageController: PageController | null = null
 	let intervalID: number | null = null
 	const guideOverlay = new GuideOverlay()
-	let guideSaveClicked = false
-	let guideNewFormObserved = false
+	const guideController = new PageController({ enableMask: false, viewportExpansion: 400 })
+	let guideSnapshot: GuideSnapshot | null = null
 
 	const myTabIdPromise = chrome.runtime
 		.sendMessage({ type: 'PAGE_CONTROL', action: 'get_my_tab_id' })
@@ -76,34 +80,90 @@ export function initPageController() {
 		const { action, payload } = message
 		const methodName = getMethodName(action)
 
-		const pc = getPC() as any
-
 		switch (action) {
-			case 'guide_analytic_reset':
-				guideSaveClicked = false
-				guideNewFormObserved = false
+			case 'guide_clear':
 				guideOverlay.clear()
+				guideSnapshot = null
 				sendResponse({ success: true })
 				break
-			case 'guide_analytic_clear':
-				guideOverlay.clear()
-				sendResponse({ success: true })
-				break
-			case 'guide_analytic_step': {
-				const match = resolveAnalyticGuideStep(document, new URL(window.location.href), {
-					saveWasClicked: guideSaveClicked,
-					newFormObserved: guideNewFormObserved,
-				})
-				if (match.step.key === 'name') guideNewFormObserved = true
-				if (match.target) {
-					guideOverlay.show(match.step, match.target, () => {
-						if (match.step.key === 'new') guideNewFormObserved = true
-						if (match.step.key === 'save') guideSaveClicked = true
-					})
-				} else {
-					guideOverlay.clear()
+			case 'guide_inspect': {
+				const startedUrl = window.location.href
+				const context = readOdooContext(document, new URL(startedUrl))
+				if (!context) {
+					sendResponse({ success: false, error: 'The current tab is not an Odoo screen.' })
+					break
 				}
-				sendResponse(match.step)
+				void guideController
+					.getBrowserState()
+					.then((state) => {
+						if (window.location.href !== startedUrl)
+							throw new Error('Odoo navigated during inspection. Inspect again.')
+						const id = crypto.randomUUID()
+						const controls = state.content.slice(0, 22000)
+						guideSnapshot = {
+							id,
+							url: window.location.href,
+							createdAt: Date.now(),
+							indices: indexedControls(controls),
+						}
+						guideOverlay.clear()
+						sendResponse({
+							success: true,
+							snapshotId: id,
+							context,
+							title: state.title,
+							controls,
+							footer: state.footer,
+						})
+					})
+					.catch((error: unknown) =>
+						sendResponse({
+							success: false,
+							error: error instanceof Error ? error.message : String(error),
+						})
+					)
+				break
+			}
+			case 'guide_highlight': {
+				const request = payload?.[0] as
+					{ snapshotId?: string; index?: number; label?: string; instruction?: string } | undefined
+				try {
+					const index = assertHighlightSelection(
+						guideSnapshot,
+						request,
+						window.location.href,
+						Date.now()
+					)
+					if (typeof request?.label !== 'string' || typeof request.instruction !== 'string')
+						throw new Error('Invalid highlight request')
+					const element = guideController.getIndexedElement(index)
+					const rect = element.getBoundingClientRect()
+					if (
+						rect.width < 1 ||
+						rect.height < 1 ||
+						getComputedStyle(element).visibility === 'hidden'
+					)
+						throw new Error('The selected control is not visible')
+					const label = request.label.trim().slice(0, 100)
+					const instruction = request.instruction.trim().slice(0, 220)
+					if (!label || !instruction) throw new Error('Highlight needs a label and instruction')
+					guideOverlay.show(
+						{ key: `${guideSnapshot!.id}:${index}`, label, instruction },
+						element,
+						() => {
+							guideSnapshot = null
+							void chrome.runtime
+								.sendMessage({ type: 'PODOO_GUIDE_TARGET_USED' })
+								.catch(() => undefined)
+						}
+					)
+					sendResponse({ success: true, label, instruction })
+				} catch (error) {
+					sendResponse({
+						success: false,
+						error: error instanceof Error ? error.message : String(error),
+					})
+				}
 				break
 			}
 			case 'get_odoo_context':
@@ -118,7 +178,8 @@ export function initPageController() {
 			case 'select_option':
 			case 'scroll':
 			case 'scroll_horizontally':
-			case 'execute_javascript':
+			case 'execute_javascript': {
+				const pc = getPC() as any
 				pc[methodName](...(payload || []))
 					.then((result: any) => sendResponse(result))
 					.catch((error: any) =>
@@ -128,6 +189,7 @@ export function initPageController() {
 						})
 					)
 				break
+			}
 
 			default:
 				sendResponse({

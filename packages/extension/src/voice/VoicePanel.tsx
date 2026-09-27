@@ -2,27 +2,72 @@ import { AlertCircle, Headphones, LoaderCircle, Mic, MicOff, X } from 'lucide-re
 import { useCallback, useEffect, useRef, useState } from 'react'
 
 import { Button } from '@/components/ui/button'
-import type { OdooPageContext } from '@/odoo/context'
+import { type OdooPageContext, companyRulesStorageKey } from '@/odoo/context'
 
-import type { AnalyticGuideStep } from './analytic-guide'
 import { activeOdooTabId, guideMessage } from './guide-client'
+import type { GuideTarget } from './guide-overlay'
 import { voiceInstructions } from './instructions'
 import { hasMicrophonePermission, openMicrophonePermissionTab } from './microphone-permission'
 
 type VoiceStatus =
 	'idle' | 'permission' | 'connecting' | 'listening' | 'speaking' | 'responding' | 'error'
 
+interface FunctionCall {
+	type: 'function_call'
+	name: string
+	call_id: string
+	arguments: string
+}
+
 interface RealtimeEvent {
 	type: string
 	delta?: string
 	transcript?: string
 	error?: { message?: string }
+	response?: { output?: { type: string; name?: string; call_id?: string; arguments?: string }[] }
 }
 
 interface VoicePanelProps {
 	context: OdooPageContext
 	onClose: () => void
 }
+
+const tools = [
+	{
+		type: 'function',
+		name: 'inspect_odoo_screen',
+		description:
+			'Read the current Odoo screen and its indexed visible controls. Call before choosing a control to highlight, and again after the user acts.',
+		parameters: { type: 'object', properties: {}, additionalProperties: false },
+	},
+	{
+		type: 'function',
+		name: 'highlight_odoo_control',
+		description:
+			'Visually point to ONE control from the most recent screen inspection. This does not click or change Odoo. Speak about the control only after this succeeds.',
+		parameters: {
+			type: 'object',
+			properties: {
+				snapshot_id: { type: 'string', description: 'snapshotId returned by inspect_odoo_screen' },
+				index: { type: 'integer', description: 'Numeric index of the control in that snapshot' },
+				label: { type: 'string', description: 'Short, human-readable name for the control' },
+				instruction: {
+					type: 'string',
+					description: 'One short instruction explaining what the person can do here',
+				},
+			},
+			required: ['snapshot_id', 'index', 'label', 'instruction'],
+			additionalProperties: false,
+		},
+	},
+	{
+		type: 'function',
+		name: 'clear_odoo_highlight',
+		description:
+			'Remove the visual highlight when changing topics or answering a conceptual question.',
+		parameters: { type: 'object', properties: {}, additionalProperties: false },
+	},
+]
 
 function statusLabel(status: VoiceStatus): string {
 	switch (status) {
@@ -31,7 +76,7 @@ function statusLabel(status: VoiceStatus): string {
 		case 'permission':
 			return 'Activa el micrófono en la pestaña que abrió Podoo.'
 		case 'listening':
-			return 'Te escucho. Habla con Podoo.'
+			return 'Te escucho. Pregúntame sobre Odoo.'
 		case 'speaking':
 			return 'Te escucho…'
 		case 'responding':
@@ -48,43 +93,20 @@ export function VoicePanel({ context, onClose }: VoicePanelProps) {
 	const [error, setError] = useState<string | null>(null)
 	const [caption, setCaption] = useState('')
 	const [lastAnswer, setLastAnswer] = useState('')
-	const [guideStep, setGuideStep] = useState<AnalyticGuideStep | null>(null)
+	const [guideTarget, setGuideTarget] = useState<GuideTarget | null>(null)
 	const peerRef = useRef<RTCPeerConnection | null>(null)
 	const channelRef = useRef<RTCDataChannel | null>(null)
 	const streamRef = useRef<MediaStream | null>(null)
 	const audioRef = useRef<HTMLAudioElement>(null)
 	const abortRef = useRef<AbortController | null>(null)
-	const guideStepRef = useRef<AnalyticGuideStep | null>(null)
-	const pendingAnnouncementRef = useRef<AnalyticGuideStep | null>(null)
-	const respondingRef = useRef(false)
-	const sessionReadyRef = useRef(false)
-	const instructionsRef = useRef(voiceInstructions(context, null))
 	const guideTabRef = useRef<number | null>(null)
+	const respondingRef = useRef(false)
+	const pendingProgressRef = useRef(false)
+	const contextRef = useRef(context)
+	contextRef.current = context
 
-	const announceStep = useCallback(() => {
-		const channel = channelRef.current
-		const step = pendingAnnouncementRef.current
-		if (
-			!step ||
-			!sessionReadyRef.current ||
-			respondingRef.current ||
-			channel?.readyState !== 'open'
-		)
-			return
-		pendingAnnouncementRef.current = null
-		respondingRef.current = true
-		channel.send(
-			JSON.stringify({
-				type: 'response.create',
-				response: {
-					output_modalities: ['audio'],
-					instructions:
-						step.state === 'target'
-							? `Di en una sola frase cuál es el control resaltado: ${step.instruction} Luego espera.`
-							: `Di brevemente: ${step.instruction} Luego espera.`,
-				},
-			})
-		)
+	const send = useCallback((event: unknown) => {
+		if (channelRef.current?.readyState === 'open') channelRef.current.send(JSON.stringify(event))
 	}, [])
 
 	const closeConnection = useCallback(() => {
@@ -96,82 +118,111 @@ export function VoicePanel({ context, onClose }: VoicePanelProps) {
 		peerRef.current = null
 		streamRef.current?.getTracks().forEach((track) => track.stop())
 		streamRef.current = null
-		sessionReadyRef.current = false
 		respondingRef.current = false
-		pendingAnnouncementRef.current = null
+		pendingProgressRef.current = false
 		if (audioRef.current) audioRef.current.srcObject = null
+		if (guideTabRef.current !== null) void guideMessage(guideTabRef.current, 'guide_clear')
+		guideTabRef.current = null
+		setGuideTarget(null)
 	}, [])
 
 	useEffect(() => closeConnection, [closeConnection])
-	useEffect(() => {
-		let active = true
-		let polling = false
-		const poll = async () => {
-			if (polling) return
-			polling = true
-			try {
-				const tabId = await activeOdooTabId(context.origin)
-				if (!active || tabId === null) return
-				if (guideTabRef.current !== tabId) {
-					if (guideTabRef.current !== null)
-						void guideMessage(guideTabRef.current, 'guide_analytic_clear')
-					guideTabRef.current = tabId
-					await guideMessage(tabId, 'guide_analytic_reset')
-				}
-				const step = await guideMessage(tabId, 'guide_analytic_step')
-				if (!active) return
-				const currentStep = step ?? {
-					key: 'unavailable',
-					label: 'Sin conexión con la pantalla',
-					instruction: 'Recarga la pestaña de Odoo y vuelve a abrir la guía.',
-					state: 'blocked' as const,
-				}
-				const previous = guideStepRef.current
-				if (
-					previous?.key === currentStep.key &&
-					previous.label === currentStep.label &&
-					previous.instruction === currentStep.instruction
-				)
-					return
-				guideStepRef.current = currentStep
-				setGuideStep(currentStep)
-				pendingAnnouncementRef.current = currentStep
-			} catch {
-				if (active) setGuideStep(null)
-			} finally {
-				polling = false
-			}
-		}
-		void poll()
-		const timer = window.setInterval(() => void poll(), 850)
-		return () => {
-			active = false
-			window.clearInterval(timer)
-			if (guideTabRef.current !== null)
-				void guideMessage(guideTabRef.current, 'guide_analytic_clear')
-			guideTabRef.current = null
-		}
-	}, [context.origin])
-	useEffect(() => {
-		const nextInstructions = voiceInstructions(context, guideStep)
-		if (nextInstructions === instructionsRef.current) return
-		instructionsRef.current = nextInstructions
-		const channel = channelRef.current
-		if (channel?.readyState === 'open') {
-			channel.send(
-				JSON.stringify({
-					type: 'session.update',
-					session: { type: 'realtime', instructions: nextInstructions },
-				})
-			)
-		}
-	}, [context, guideStep])
 
-	const stop = () => {
-		closeConnection()
-		setStatus('idle')
-		setCaption('')
-	}
+	const callTool = useCallback(async (call: FunctionCall): Promise<Record<string, unknown>> => {
+		const tabId = await activeOdooTabId(contextRef.current.origin)
+		if (tabId === null) return { success: false, error: 'Open the Odoo tab for this conversation.' }
+		guideTabRef.current = tabId
+		let args: Record<string, unknown>
+		try {
+			args = JSON.parse(call.arguments || '{}') as Record<string, unknown>
+		} catch {
+			return { success: false, error: 'Invalid tool arguments.' }
+		}
+		switch (call.name) {
+			case 'inspect_odoo_screen': {
+				setGuideTarget(null)
+				const result = await guideMessage(tabId, 'guide_inspect')
+				const key = companyRulesStorageKey(contextRef.current.origin)
+				const rules = (await chrome.storage.local.get(key))[key]
+				return { ...result, companyRules: typeof rules === 'string' ? rules.slice(0, 4000) : '' }
+			}
+			case 'highlight_odoo_control': {
+				const result = await guideMessage(tabId, 'guide_highlight', [
+					{
+						snapshotId: args.snapshot_id,
+						index: args.index,
+						label: args.label,
+						instruction: args.instruction,
+					},
+				])
+				if (result.success === true)
+					setGuideTarget({
+						key: `${args.snapshot_id}:${args.index}`,
+						label: String(result.label),
+						instruction: String(result.instruction),
+					})
+				return result
+			}
+			case 'clear_odoo_highlight':
+				setGuideTarget(null)
+				return guideMessage(tabId, 'guide_clear')
+			default:
+				return { success: false, error: `Unknown tool: ${call.name}` }
+		}
+	}, [])
+
+	const finishResponse = useCallback(
+		async (event: RealtimeEvent) => {
+			respondingRef.current = false
+			const calls = (event.response?.output ?? []).filter(
+				(item): item is FunctionCall =>
+					item.type === 'function_call' &&
+					typeof item.name === 'string' &&
+					typeof item.call_id === 'string' &&
+					typeof item.arguments === 'string'
+			)
+			if (calls.length) {
+				setStatus('responding')
+				for (const call of calls) {
+					let result: Record<string, unknown>
+					try {
+						result = await callTool(call)
+					} catch (error) {
+						result = {
+							success: false,
+							error: error instanceof Error ? error.message : String(error),
+						}
+					}
+					send({
+						type: 'conversation.item.create',
+						item: {
+							type: 'function_call_output',
+							call_id: call.call_id,
+							output: JSON.stringify(result),
+						},
+					})
+				}
+				if (channelRef.current?.readyState === 'open') {
+					respondingRef.current = true
+					send({ type: 'response.create' })
+				}
+				return
+			}
+			setStatus('listening')
+			if (pendingProgressRef.current && channelRef.current?.readyState === 'open') {
+				pendingProgressRef.current = false
+				respondingRef.current = true
+				send({
+					type: 'response.create',
+					response: {
+						instructions:
+							'La persona usó el control resaltado. Llama a inspect_odoo_screen, decide el siguiente paso según su objetivo y la pantalla actual; si corresponde, resalta un solo control y explícalo.',
+					},
+				})
+			}
+		},
+		[callTool, send]
+	)
 
 	const start = useCallback(async () => {
 		if (status === 'connecting' || peerRef.current) return
@@ -191,7 +242,6 @@ export function VoicePanel({ context, onClose }: VoicePanelProps) {
 			return
 		}
 		setStatus('connecting')
-		pendingAnnouncementRef.current = guideStepRef.current
 		const abort = new AbortController()
 		abortRef.current = abort
 		try {
@@ -203,14 +253,15 @@ export function VoicePanel({ context, onClose }: VoicePanelProps) {
 				return
 			}
 			streamRef.current = stream
-
 			const result = (await chrome.runtime.sendMessage({ type: 'PODOO_REALTIME_TOKEN' })) as {
 				token?: string
 				error?: string
 			}
 			abort.signal.throwIfAborted()
 			if (!result?.token) throw new Error(result?.error || 'No se pudo iniciar la voz.')
-
+			const rulesKey = companyRulesStorageKey(contextRef.current.origin)
+			const storedRules = (await chrome.storage.local.get(rulesKey))[rulesKey]
+			const companyRules = typeof storedRules === 'string' ? storedRules : ''
 			const peer = new RTCPeerConnection()
 			peerRef.current = peer
 			peer.ontrack = (event) => {
@@ -223,30 +274,28 @@ export function VoicePanel({ context, onClose }: VoicePanelProps) {
 					closeConnection()
 				}
 			}
-
 			for (const track of stream.getAudioTracks()) {
 				track.enabled = false
 				peer.addTrack(track, stream)
 			}
-
 			const channel = peer.createDataChannel('oai-events')
 			channelRef.current = channel
 			channel.addEventListener('open', () => {
-				channel.send(
-					JSON.stringify({
-						type: 'session.update',
-						session: {
-							type: 'realtime',
-							model: 'gpt-realtime-2.1',
-							output_modalities: ['audio'],
-							instructions: instructionsRef.current,
-							audio: {
-								input: { turn_detection: { type: 'semantic_vad' } },
-								output: { voice: 'marin' },
-							},
+				send({
+					type: 'session.update',
+					session: {
+						type: 'realtime',
+						model: 'gpt-realtime-2.1',
+						output_modalities: ['audio'],
+						instructions: voiceInstructions(contextRef.current, companyRules),
+						tools,
+						tool_choice: 'auto',
+						audio: {
+							input: { turn_detection: { type: 'semantic_vad' } },
+							output: { voice: 'marin' },
 						},
-					})
-				)
+					},
+				})
 			})
 			channel.addEventListener('message', (message: MessageEvent<string>) => {
 				let event: RealtimeEvent
@@ -257,17 +306,13 @@ export function VoicePanel({ context, onClose }: VoicePanelProps) {
 				}
 				switch (event.type) {
 					case 'session.updated':
-						sessionReadyRef.current = true
 						streamRef.current?.getAudioTracks().forEach((track) => {
 							track.enabled = true
 						})
 						setStatus('listening')
-						announceStep()
 						break
 					case 'response.done':
-						respondingRef.current = false
-						setStatus('listening')
-						announceStep()
+						void finishResponse(event)
 						break
 					case 'input_audio_buffer.speech_started':
 						setStatus('speaking')
@@ -291,23 +336,17 @@ export function VoicePanel({ context, onClose }: VoicePanelProps) {
 						break
 				}
 			})
-
 			const offer = await peer.createOffer()
 			await peer.setLocalDescription(offer)
 			abort.signal.throwIfAborted()
 			if (!offer.sdp) throw new Error('El navegador no pudo preparar el audio.')
 			const response = await fetch('https://api.openai.com/v1/realtime/calls', {
 				method: 'POST',
-				headers: {
-					Authorization: `Bearer ${result.token}`,
-					'Content-Type': 'application/sdp',
-				},
+				headers: { Authorization: `Bearer ${result.token}`, 'Content-Type': 'application/sdp' },
 				body: offer.sdp,
 				signal: abort.signal,
 			})
-			if (!response.ok) {
-				throw new Error(`OpenAI rechazó la conexión de voz (${response.status}).`)
-			}
+			if (!response.ok) throw new Error(`OpenAI rechazó la conexión de voz (${response.status}).`)
 			await peer.setRemoteDescription({ type: 'answer', sdp: await response.text() })
 			abort.signal.throwIfAborted()
 		} catch (cause) {
@@ -322,7 +361,7 @@ export function VoicePanel({ context, onClose }: VoicePanelProps) {
 			setStatus('error')
 			closeConnection()
 		}
-	}, [status, closeConnection, announceStep])
+	}, [status, closeConnection, finishResponse, send])
 
 	useEffect(() => {
 		const onMessage = (message: { type?: string }, sender: chrome.runtime.MessageSender) => {
@@ -331,13 +370,40 @@ export function VoicePanel({ context, onClose }: VoicePanelProps) {
 				sender.url === chrome.runtime.getURL('mic-permission.html')
 			)
 				void start()
+			if (message.type === 'PODOO_GUIDE_TARGET_USED' && sender.tab?.id === guideTabRef.current) {
+				setGuideTarget(null)
+				pendingProgressRef.current = true
+				window.setTimeout(() => {
+					if (
+						pendingProgressRef.current &&
+						!respondingRef.current &&
+						channelRef.current?.readyState === 'open'
+					) {
+						pendingProgressRef.current = false
+						respondingRef.current = true
+						send({
+							type: 'response.create',
+							response: {
+								instructions:
+									'La persona usó el control resaltado. Llama a inspect_odoo_screen y decide qué control mostrar después según el objetivo y la pantalla actual. Explica solo el siguiente paso.',
+							},
+						})
+					}
+				}, 600)
+			}
 		}
 		chrome.runtime.onMessage.addListener(onMessage)
 		return () => chrome.runtime.onMessage.removeListener(onMessage)
-	}, [start])
+	}, [start, send])
+
+	const stop = () => {
+		closeConnection()
+		setStatus('idle')
+		setCaption('')
+	}
 
 	return (
-		<section className="border-b bg-primary/5 px-4 py-4" aria-label="Prueba de voz en vivo">
+		<section className="border-b bg-primary/5 px-4 py-4" aria-label="Voz en vivo">
 			<audio ref={audioRef} autoPlay playsInline />
 			<div className="flex items-start justify-between gap-3">
 				<div>
@@ -345,7 +411,8 @@ export function VoicePanel({ context, onClose }: VoicePanelProps) {
 						<Headphones className="size-4 text-primary" /> Voz en vivo · Realtime 2.1
 					</div>
 					<p className="mt-1 text-xs text-muted-foreground">
-						Guía visual para cuentas analíticas. Tú haces clic; Podoo señala el control.
+						Pregunta lo que quieras sobre Odoo. Para guiarte, Podoo señala el siguiente control en
+						tu pantalla.
 					</p>
 				</div>
 				<Button
@@ -358,15 +425,15 @@ export function VoicePanel({ context, onClose }: VoicePanelProps) {
 					<X className="size-4" />
 				</Button>
 			</div>
-			<div className="mt-3 rounded-xl border border-primary/30 bg-card p-3" aria-live="polite">
-				<p className="text-[11px] font-semibold uppercase tracking-wide text-primary">
-					{guideStep?.state === 'target' ? 'Siguiente clic en Odoo' : 'Guía en Odoo'}
-				</p>
-				<p className="mt-1 text-sm font-semibold">
-					{guideStep?.label ?? 'Preparando el siguiente paso…'}
-				</p>
-				<p className="mt-1 text-xs text-muted-foreground">{guideStep?.instruction}</p>
-			</div>
+			{guideTarget && (
+				<div className="mt-3 rounded-xl border border-primary/30 bg-card p-3" aria-live="polite">
+					<p className="text-[11px] font-semibold uppercase tracking-wide text-primary">
+						Señalado en Odoo
+					</p>
+					<p className="mt-1 text-sm font-semibold">{guideTarget.label}</p>
+					<p className="mt-1 text-xs text-muted-foreground">{guideTarget.instruction}</p>
+				</div>
+			)}
 			<div className="mt-3 flex items-center gap-2">
 				<Button
 					type="button"

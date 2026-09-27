@@ -238,6 +238,14 @@ export class PageController extends EventTarget {
 		}
 	}
 
+	/** Resolve a control from the most recent indexed screen without acting on it. */
+	getIndexedElement(index: number): HTMLElement {
+		this.assertIndexed()
+		const element = getElementByIndex(this.selectorMap, index)
+		if (!element.isConnected) throw new Error(`Element at index ${index} is no longer on screen`)
+		return element
+	}
+
 	/**
 	 * Click element by index
 	 */

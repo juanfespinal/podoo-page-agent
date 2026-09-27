@@ -1,5 +1,3 @@
-import type { AnalyticGuideStep } from './analytic-guide'
-
 export async function activeOdooTabId(origin: string): Promise<number | null> {
 	const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true })
 	if (!tab?.id || !tab.url) return null
@@ -12,17 +10,17 @@ export async function activeOdooTabId(origin: string): Promise<number | null> {
 
 export async function guideMessage(
 	tabId: number,
-	action: 'guide_analytic_reset' | 'guide_analytic_step' | 'guide_analytic_clear'
-): Promise<AnalyticGuideStep | null> {
+	action: 'guide_inspect' | 'guide_highlight' | 'guide_clear',
+	payload?: unknown[]
+): Promise<Record<string, unknown>> {
 	try {
-		const response = await chrome.runtime.sendMessage({
+		return (await chrome.runtime.sendMessage({
 			type: 'PAGE_CONTROL',
 			action,
 			targetTabId: tabId,
-		})
-		if (!response || response.success === false) return null
-		return action === 'guide_analytic_step' ? (response as AnalyticGuideStep) : null
-	} catch {
-		return null
+			payload,
+		})) as Record<string, unknown>
+	} catch (error) {
+		return { success: false, error: error instanceof Error ? error.message : String(error) }
 	}
 }
