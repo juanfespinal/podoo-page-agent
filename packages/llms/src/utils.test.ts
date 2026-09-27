@@ -13,3 +13,16 @@ describe('normalizeModelName', () => {
 		expect(normalizeModelName(input)).toBe(expected)
 	})
 })
+
+describe('modelPatch', () => {
+	it('enables GPT-6 Luna function calling through Chat Completions', () => {
+		const request = { model: 'gpt-6-luna', tools: [{ type: 'function' }], tool_choice: 'required' }
+		modelPatch(request, 'https://api.openai.com/v1')
+		expect(request).toEqual({
+			model: 'gpt-6-luna',
+			tools: [{ type: 'function' }],
+			tool_choice: 'required',
+			reasoning_effort: 'none',
+		})
+	})
+})
