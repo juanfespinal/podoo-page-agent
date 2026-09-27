@@ -31,7 +31,8 @@ export function handlePageControlMessage(
 			sendResponse(result)
 		})
 		.catch((error) => {
-			console.error(PREFIX, error)
+			// Probing a tab without an injected content script is an expected Odoo-context miss.
+			if (action !== 'get_odoo_context') console.error(PREFIX, error)
 			sendResponse({
 				success: false,
 				error: error instanceof Error ? error.message : String(error),

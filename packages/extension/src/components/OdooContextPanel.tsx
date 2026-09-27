@@ -14,7 +14,7 @@ export function OdooContextPanel() {
 	const refresh = useCallback(async () => {
 		try {
 			const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true })
-			if (!tab?.id) {
+			if (!tab?.id || !/^https?:\/\//.test(tab.url ?? '')) {
 				setContext(null)
 				setMessage('Open an Odoo tab to see its context.')
 				return
