@@ -1,6 +1,6 @@
 # Podoo Copilot prototype
 
-This fork adds an Odoo-focused Chrome side panel to Page Agent. It uses the current Odoo screen and locally saved process rules to explain a workflow, guide a user through it, or assist with approved actions.
+This fork adds an Odoo-focused Chrome side panel to Page Agent. It uses the current Odoo screen and locally saved process rules to explain a workflow, guide a user through it, or carry out a requested task.
 
 ## Try it locally
 
@@ -16,15 +16,15 @@ The side panel reads the Odoo app, view, breadcrumbs, record title, and current 
 
 ## Modes
 
-| Mode (UI)     | Behavior                                                                                                                                                             |
-| ------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Entender      | Explains the current screen and its purpose. Page-changing tools are unavailable.                                                                                    |
-| Guiarme       | Gives one concrete next step for the user to perform. Page-changing tools are unavailable.                                                                           |
-| Hacer conmigo | Can click and edit fields. The panel asks for approval of each target and entered value before acting. It checks the screen and indexed target again after approval. |
+| Mode (UI)     | Behavior                                                                                                                                                                                                                                                       |
+| ------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Entender      | Explains the current screen and its purpose. Page-changing tools are unavailable.                                                                                                                                                                              |
+| Guiarme       | Gives one concrete next step for the user to perform. Page-changing tools are unavailable.                                                                                                                                                                     |
+| Hacer conmigo | The task request authorizes routine navigation, field edits, and saving drafts. Consequential clicks, such as confirming, sending, deleting, or paying, ask for confirmation in the side panel. The screen and indexed target are checked again before acting. |
 
 The chat is saved locally per Odoo origin, so reopening the side panel restores the conversation for that instance. Podoo sends a bounded window of recent turns to the model for follow-up questions. Previous replies are context, not proof that an action occurred; the current Odoo screen is checked again for every task. **Nueva conversación** clears the chat for the current origin. The task trace remains separately available in **Registro de tareas**.
 
-Tab switching, opening, and closing tools are unavailable in all three modes. The upstream page-to-extension execution bridge is disabled in this fork so page scripts cannot bypass the side panel approvals.
+Tab switching, opening, and closing tools are unavailable in all three modes. The upstream page-to-extension execution bridge is disabled in this fork so page scripts cannot bypass the side panel controls.
 
 ## Architecture and current limits
 
@@ -35,7 +35,7 @@ Odoo rendered page → Odoo context + Page Agent DOM snapshot
                          ↓
                  Page Agent reasoning
                          ↓
-   Entender / Guiarme / approval-gated Hacer conmigo
+   Entender / Guiarme / task-scoped Hacer conmigo
 ```
 
 This is an extension prototype with no Hermes or Jev dependency. It does not yet connect to an Odoo server addon or a versioned knowledge base. Company rules are manually entered text; there is no retrieval, source citation, role-aware policy, or typed Odoo RPC. DOM automation can miss custom widgets and cannot prove a business transaction succeeded. For a production adoption copilot, the next integration should be a standalone Odoo addon owned by this project. It can provide model, record, user role, approved workflow, and cited knowledge for the current screen. High-impact changes should use explicit Odoo operations with a confirmation step and an auditable result.

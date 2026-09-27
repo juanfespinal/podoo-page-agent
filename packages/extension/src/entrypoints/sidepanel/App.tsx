@@ -65,7 +65,8 @@ const MODES = {
 	assist: {
 		label: 'Hacer conmigo',
 		heading: 'Hazlo conmigo',
-		description: 'Puedo hacer clic y escribir, pero te pediré permiso antes de cada acción.',
+		description:
+			'Hago los pasos de tu tarea. Solo confirmas acciones importantes como enviar, confirmar o eliminar.',
 		placeholder: 'Describe qué quieres hacer en Odoo…',
 		suggestions: ['Ayúdame a completar este formulario', 'Haz esta tarea conmigo'],
 		icon: MousePointerClick,
@@ -555,17 +556,17 @@ export default function App() {
 				<section
 					className="border-t border-primary/25 bg-primary/5 px-4 py-4"
 					role="alertdialog"
-					aria-label="Permitir acción en Odoo"
+					aria-label="Confirmar acción importante en Odoo"
 				>
 					<div className="flex items-center gap-2 text-sm font-semibold">
 						<MousePointerClick className="size-4 text-primary" />
-						Podoo quiere hacer este paso
+						Confirma esta acción importante
 					</div>
 					<p className="mt-2 whitespace-pre-wrap break-words rounded-lg border bg-card p-3 text-sm">
 						{approval}
 					</p>
 					<p className="mt-2 text-xs text-muted-foreground">
-						Revisa el control y el valor antes de permitirlo.
+						Esta acción puede enviar, confirmar o cambiar el estado de un registro.
 					</p>
 					<div className="mt-3 flex gap-2">
 						<Button className="min-h-11 flex-1" onClick={() => answerApproval(true)}>

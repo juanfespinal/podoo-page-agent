@@ -22,14 +22,18 @@ function indexedLine(content: string, index: number): string | null {
 	)
 }
 
-async function approveIndexedAction(
+const CONSEQUENTIAL_CLICK =
+	/(?:^|[^a-z])(?:confirm(?:ar)?|approve|aprobar|validate|validar|send|enviar|delete|eliminar|unlink|cancel(?:ar)?|post|publicar|publish|pay|pagar|refund|reembolsar|sign|firmar|archive|archivar|registrar[_\s-]?pago|register[_\s-]?payment|facturar|invoice|crear[_\s-]?factura)(?=$|[^a-z])/i
+
+async function verifyIndexedAction(
 	agent: PageAgentCore,
 	index: number,
 	verb: string,
 	requestApproval: RequestApproval | undefined,
-	{ signal }: ToolContext
+	{ signal }: ToolContext,
+	approveConsequentialClick = false
 ): Promise<void> {
-	if (!requestApproval) throw new Error('Las acciones asistidas requieren el panel de aprobación.')
+	signal.throwIfAborted()
 	const controller = agent.pageController as typeof agent.pageController & {
 		getOdooContext: () => Promise<OdooPageContext | null>
 	}
@@ -38,8 +42,11 @@ async function approveIndexedAction(
 	const before = indexedLine((await controller.getBrowserState()).content, index)
 	if (!before)
 		throw new Error(`El control ${index} ya no está visible. Revisa la pantalla de Odoo.`)
-	if (!(await requestApproval(`${verb}\n${before}`, signal))) {
-		throw new Error('El usuario rechazó esta acción de Odoo.')
+	if (approveConsequentialClick && CONSEQUENTIAL_CLICK.test(before)) {
+		if (!requestApproval) throw new Error('Esta acción importante requiere el panel de aprobación.')
+		if (!(await requestApproval(`${verb}\n${before}`, signal))) {
+			throw new Error('El usuario rechazó esta acción de Odoo.')
+		}
 	}
 	signal.throwIfAborted()
 	const screenAfter = await controller.getOdooContext()
@@ -52,7 +59,7 @@ async function approveIndexedAction(
 	}
 }
 
-/** Explain and guide cannot operate the page. Assist asks before every edit or click. */
+/** Explain and guide cannot operate the page. Assist confirms consequential clicks. */
 export function createOdooToolOverrides(
 	mode: OdooMode,
 	requestApproval?: RequestApproval
@@ -71,18 +78,26 @@ export function createOdooToolOverrides(
 	return {
 		...DISABLED_TOOLS,
 		click_element_by_index: {
-			description: 'Click an Odoo control after the user approves the exact target.',
+			description:
+				'Click an Odoo control to complete the requested task. Consequential actions require confirmation in the side panel.',
 			inputSchema: z.object({ index: z.int().min(0) }),
 			async execute(input: { index: number }, context) {
-				await approveIndexedAction(this, input.index, 'Hacer clic en', requestApproval, context)
+				await verifyIndexedAction(
+					this,
+					input.index,
+					'Hacer clic en',
+					requestApproval,
+					context,
+					true
+				)
 				return (await this.pageController.clickElement(input.index)).message
 			},
 		},
 		input_text: {
-			description: 'Type into an Odoo field after the user approves the field and value.',
+			description: 'Type into an Odoo field as part of the requested task.',
 			inputSchema: z.object({ index: z.int().min(0), text: z.string() }),
 			async execute(input: { index: number; text: string }, context) {
-				await approveIndexedAction(
+				await verifyIndexedAction(
 					this,
 					input.index,
 					`Escribir ${JSON.stringify(input.text)} en`,
@@ -93,10 +108,10 @@ export function createOdooToolOverrides(
 			},
 		},
 		select_dropdown_option: {
-			description: 'Select an Odoo option after the user approves the control and option.',
+			description: 'Select an Odoo option as part of the requested task.',
 			inputSchema: z.object({ index: z.int().min(0), text: z.string() }),
 			async execute(input: { index: number; text: string }, context) {
-				await approveIndexedAction(
+				await verifyIndexedAction(
 					this,
 					input.index,
 					`Seleccionar ${JSON.stringify(input.text)} en`,
