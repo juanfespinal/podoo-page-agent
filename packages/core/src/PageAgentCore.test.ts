@@ -119,6 +119,42 @@ async function startBlockedTask(
 
 describe.concurrent('PageAgentCore lifecycle', () => {
 	describe('normal execution', () => {
+		it('sends prior chat turns as real messages before the current request and clears them for a new task', async () => {
+			const fetchMock = createFetchMock()
+				.mockResolvedValueOnce(doneResponse('first answer'))
+				.mockResolvedValueOnce(doneResponse('second answer'))
+			let taskNumber = 0
+			const agent = createAgent(fetchMock, {
+				onBeforeTask: (currentAgent) => {
+					taskNumber++
+					if (taskNumber === 1) {
+						currentAgent.setConversationMessages([
+							{ role: 'user', content: 'Haz una cotización para Alpina en borrador' },
+							{ role: 'assistant', content: '¿Qué producto y cantidad?' },
+						])
+					}
+				},
+			})
+
+			await agent.execute('Cofia JB Azul, 150 a 5698 pesos')
+			const firstBody = JSON.parse(fetchMock.mock.calls[0][1]?.body as string)
+			expect(firstBody.messages.map((message: { role: string }) => message.role)).toEqual([
+				'system',
+				'user',
+				'assistant',
+				'user',
+			])
+			expect(firstBody.messages[1].content).toContain('Alpina')
+			expect(firstBody.messages[3].content).toContain('Cofia JB Azul')
+
+			await agent.execute('Nueva tarea')
+			const secondBody = JSON.parse(fetchMock.mock.calls[1][1]?.body as string)
+			expect(secondBody.messages.map((message: { role: string }) => message.role)).toEqual([
+				'system',
+				'user',
+			])
+		})
+
 		it('runs a task to natural completion', async () => {
 			const fetchMock = createFetchMock().mockResolvedValueOnce(doneResponse('all done'))
 			const agent = createAgent(fetchMock)

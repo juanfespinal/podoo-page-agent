@@ -3,10 +3,10 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
 	clearConversation,
 	conversationStorageKey,
-	formatConversationMemory,
 	loadConversation,
 	normalizeConversation,
 	saveConversation,
+	toConversationMessages,
 } from './conversation'
 
 afterEach(() => vi.unstubAllGlobals())
@@ -26,10 +26,33 @@ describe('Odoo conversation memory', () => {
 			mode: 'guide',
 			createdAt: index,
 		}))
-		const memory = formatConversationMemory(normalizeConversation([...turns, { text: 'invalid' }]))
-		expect(memory).toContain('Message 19')
-		expect(memory).not.toContain('Message 0')
-		expect(memory).toContain('Prior replies do not prove')
+		const messages = toConversationMessages(normalizeConversation([...turns, { text: 'invalid' }]))
+		expect(messages).toHaveLength(12)
+		expect(messages.at(-1)).toEqual({ role: 'assistant', content: 'Message 19' })
+		expect(messages.some((message) => message.content === 'Message 0')).toBe(false)
+	})
+
+	it('preserves Alpina from the earlier request as a user turn', () => {
+		const messages = toConversationMessages([
+			{
+				id: '1',
+				role: 'user',
+				text: 'Haz una cotización nueva dirigida a Alpina y déjala en borrador',
+				mode: 'guide',
+				createdAt: 1,
+			},
+			{
+				id: '2',
+				role: 'assistant',
+				text: '¿Qué producto y cantidad?',
+				mode: 'guide',
+				createdAt: 2,
+			},
+		])
+		expect(messages).toEqual([
+			{ role: 'user', content: 'Haz una cotización nueva dirigida a Alpina y déjala en borrador' },
+			{ role: 'assistant', content: '¿Qué producto y cantidad?' },
+		])
 	})
 
 	it('restores a chat after reopening while isolating each Odoo instance', async () => {
