@@ -11,6 +11,7 @@ This fork adds an Odoo-focused Chrome side panel to Page Agent. It uses the curr
 5. In **Configuración**, enter a model endpoint and API key approved for the Odoo data you will use. The upstream free testing endpoint is blocked for Podoo tasks.
 6. Optionally expand **Reglas de tu empresa** and add approved process rules. Rules are stored in Chrome local extension storage for that Odoo origin.
 7. Choose **Entender**, **Guiarme**, or **Hacer conmigo**, then ask about the open screen. You can ask follow-up questions in the same chat.
+8. To try live voice in the side panel, use an OpenAI API key with the base URL `https://api.openai.com/v1`, click the microphone icon, then **Iniciar voz**. Allow microphone access when Chrome asks. Click **Terminar voz** to close the Realtime session.
 
 The side panel reads the Odoo app, view, breadcrumbs, record title, and current URL path from the rendered page. Page Agent supplies the interactive DOM snapshot. It refreshes screen context as a task progresses. It stops when the tab stops being Odoo or moves to another Odoo origin.
 
@@ -23,6 +24,8 @@ The side panel reads the Odoo app, view, breadcrumbs, record title, and current 
 | Hacer conmigo | The task request authorizes routine navigation, field edits, and saving drafts. Consequential clicks, such as confirming, sending, deleting, or paying, ask for confirmation in the side panel. The screen and indexed target are checked again before acting. |
 
 The chat is saved locally per Odoo origin, so reopening the side panel restores the conversation for that instance. Podoo sends a bounded window of recent turns to the model for follow-up questions. Previous replies are context, not proof that an action occurred; the current Odoo screen is checked again for every task. **Nueva conversación** clears the chat for the current origin. The task trace remains separately available in **Registro de tareas**.
+
+The Realtime 2.1 voice pilot runs inside the Chrome side panel. It reuses the OpenAI key already configured for text tasks to mint a short-lived Realtime credential in the extension background worker. The voice session is conversational and read-only: it can explain the documented Odoo 19 analytic-account workflow but does not operate Odoo. Its audio conversation lasts for the live session; the current text chat history remains separate. This pilot will inform the later Odoo Brain integration before voice is allowed to execute tasks.
 
 Tab switching, opening, and closing tools are unavailable in all three modes. The upstream page-to-extension execution bridge is disabled in this fork so page scripts cannot bypass the side panel controls.
 

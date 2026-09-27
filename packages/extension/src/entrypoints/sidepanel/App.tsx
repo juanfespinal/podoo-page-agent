@@ -8,6 +8,7 @@ import {
 	ListChecks,
 	LoaderCircle,
 	MessageCircle,
+	Mic,
 	MousePointerClick,
 	Plus,
 	Send,
@@ -34,6 +35,7 @@ import {
 	loadConversation,
 	saveConversation,
 } from '@/odoo/conversation'
+import { VoicePanel } from '@/voice/VoicePanel'
 
 import { useAgent } from '../../agent/useAgent'
 
@@ -108,6 +110,7 @@ export default function App() {
 	const [conversationError, setConversationError] = useState<string | null>(null)
 	const [confirmNew, setConfirmNew] = useState(false)
 	const [processing, setProcessing] = useState(false)
+	const [voiceOpen, setVoiceOpen] = useState(false)
 	const transcriptRef = useRef<HTMLDivElement>(null)
 	const textareaRef = useRef<HTMLTextAreaElement>(null)
 	const conversationRef = useRef<ConversationTurn[]>([])
@@ -133,6 +136,7 @@ export default function App() {
 	const handleContextChange = useCallback((next: OdooPageContext | null) => {
 		const nextOrigin = next?.origin ?? null
 		if (activeOriginRef.current !== nextOrigin) {
+			setVoiceOpen(false)
 			activeOriginRef.current = nextOrigin
 			conversationRef.current = []
 			setConversation([])
@@ -144,9 +148,10 @@ export default function App() {
 
 	const changeMode = useCallback(
 		(next: OdooMode) => {
-			if (config && !isBusy && !pendingRef.current) void configure({ ...config, odooMode: next })
+			if (config && !isBusy && !voiceOpen && !pendingRef.current)
+				void configure({ ...config, odooMode: next })
 		},
-		[config, configure, isBusy]
+		[config, configure, isBusy, voiceOpen]
 	)
 
 	useEffect(() => {
@@ -193,7 +198,7 @@ export default function App() {
 	const runTask = useCallback(
 		async (task: string) => {
 			const normalizedTask = task.trim()
-			if (!normalizedTask || isRunning || pendingRef.current) return
+			if (!normalizedTask || isRunning || voiceOpen || pendingRef.current) return
 			if (!origin || loadedOrigin !== origin) {
 				setConversationError('Abre una pantalla de Odoo y espera a que Podoo la reconozca.')
 				return
@@ -275,7 +280,7 @@ export default function App() {
 				setProcessing(false)
 			}
 		},
-		[execute, isRunning, loadedOrigin, mode, origin]
+		[execute, isRunning, loadedOrigin, mode, origin, voiceOpen]
 	)
 
 	const newConversation = useCallback(async () => {
@@ -337,7 +342,9 @@ export default function App() {
 	}
 
 	const selected = MODES[mode]
-	const canSend = Boolean(origin && loadedOrigin === origin && inputValue.trim() && !isBusy)
+	const canSend = Boolean(
+		origin && loadedOrigin === origin && inputValue.trim() && !isBusy && !voiceOpen
+	)
 
 	return (
 		<div className="podoo-panel flex h-screen min-h-0 flex-col bg-background text-foreground">
@@ -351,10 +358,22 @@ export default function App() {
 				</div>
 				<div className="flex items-center gap-1">
 					<Button
+						variant={voiceOpen ? 'secondary' : 'ghost'}
+						size="icon"
+						className="size-10 cursor-pointer"
+						disabled={!origin || loadedOrigin !== origin || isBusy}
+						onClick={() => setVoiceOpen((open) => !open)}
+						aria-label={voiceOpen ? 'Cerrar voz en vivo' : 'Abrir voz en vivo'}
+						aria-pressed={voiceOpen}
+						title="Voz en vivo"
+					>
+						<Mic className="size-4" />
+					</Button>
+					<Button
 						variant="ghost"
 						size="icon"
 						className="size-10 cursor-pointer"
-						disabled={!origin || isBusy || conversation.length === 0}
+						disabled={!origin || isBusy || voiceOpen || conversation.length === 0}
 						onClick={() => setConfirmNew(true)}
 						aria-label="Nueva conversación"
 						title="Nueva conversación"
@@ -365,7 +384,7 @@ export default function App() {
 						variant="ghost"
 						size="icon"
 						className="size-10 cursor-pointer"
-						disabled={isBusy}
+						disabled={isBusy || voiceOpen}
 						onClick={() => setView({ name: 'history' })}
 						aria-label="Historial de tareas"
 						title="Historial de tareas"
@@ -376,7 +395,7 @@ export default function App() {
 						variant="ghost"
 						size="icon"
 						className="size-10 cursor-pointer"
-						disabled={isBusy}
+						disabled={isBusy || voiceOpen}
 						onClick={() => setView({ name: 'config' })}
 						aria-label="Configuración"
 						title="Configuración"
@@ -401,7 +420,7 @@ export default function App() {
 								type="button"
 								key={option}
 								aria-pressed={mode === option}
-								disabled={!config || isBusy}
+								disabled={!config || isBusy || voiceOpen}
 								onClick={() => changeMode(option)}
 								className={`podoo-mode flex min-h-16 flex-col items-center justify-center gap-1 rounded-xl border px-1 py-2 text-center text-xs font-semibold transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring disabled:opacity-50 ${mode === option ? 'podoo-mode-active' : 'bg-background hover:bg-muted'}`}
 							>
@@ -421,6 +440,7 @@ export default function App() {
 					</p>
 				</div>
 			</section>
+			{voiceOpen && context && <VoicePanel context={context} onClose={() => setVoiceOpen(false)} />}
 
 			{conversationError && (
 				<div
@@ -479,6 +499,7 @@ export default function App() {
 									<button
 										key={suggestion}
 										type="button"
+										disabled={voiceOpen}
 										className="min-h-11 rounded-xl border bg-card px-3 py-2 text-left text-sm transition-colors hover:border-primary/50 hover:bg-primary/5 focus-visible:outline-2 focus-visible:outline-ring"
 										onClick={() => void runTask(suggestion)}
 									>
@@ -599,7 +620,7 @@ export default function App() {
 								submit()
 							}
 						}}
-						disabled={isBusy || !origin || loadedOrigin !== origin}
+						disabled={isBusy || voiceOpen || !origin || loadedOrigin !== origin}
 						placeholder={origin ? selected.placeholder : 'Abre Odoo para empezar…'}
 						className="min-h-12 max-h-36 w-full resize-y bg-transparent px-2 py-1 text-sm leading-relaxed outline-none placeholder:text-muted-foreground/80 disabled:cursor-not-allowed"
 					/>
