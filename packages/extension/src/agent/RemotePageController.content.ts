@@ -10,13 +10,19 @@ import {
 	assertHighlightSelection,
 	indexedControls,
 } from '@/voice/guide-validation'
+import { collectOdooFieldTargets } from '@/voice/odoo-field-targets'
 
 export function initPageController() {
 	let pageController: PageController | null = null
 	let intervalID: number | null = null
 	const guideOverlay = new GuideOverlay()
-	const guideController = new PageController({ enableMask: false, viewportExpansion: 400 })
+	const guideController = new PageController({
+		enableMask: false,
+		viewportExpansion: 400,
+		showIndexOverlays: false,
+	})
 	let guideSnapshot: GuideSnapshot | null = null
+	let guideExtraTargets = new Map<number, HTMLElement>()
 
 	const myTabIdPromise = chrome.runtime
 		.sendMessage({ type: 'PAGE_CONTROL', action: 'get_my_tab_id' })
@@ -33,6 +39,7 @@ export function initPageController() {
 			pageController = new PageController({
 				enableMask: false,
 				viewportExpansion: 400,
+				showIndexOverlays: false,
 			})
 		}
 		return pageController
@@ -84,6 +91,7 @@ export function initPageController() {
 			case 'guide_clear':
 				guideOverlay.clear()
 				guideSnapshot = null
+				guideExtraTargets.clear()
 				sendResponse({ success: true })
 				break
 			case 'guide_inspect': {
@@ -99,12 +107,23 @@ export function initPageController() {
 						if (window.location.href !== startedUrl)
 							throw new Error('Odoo navigated during inspection. Inspect again.')
 						const id = crypto.randomUUID()
-						const controls = state.content.slice(0, 22000)
+						const controls = state.content.slice(0, 18000)
+						const allIndices = indexedControls(state.content)
+						const firstExtraIndex =
+							[...allIndices].reduce((max, index) => Math.max(max, index), -1) + 1
+						const indexedElements = [...allIndices].map((index) =>
+							guideController.getIndexedElement(index)
+						)
+						const fields = collectOdooFieldTargets(document, firstExtraIndex, indexedElements)
+						guideExtraTargets = new Map(fields.map((field) => [field.index, field.element]))
 						guideSnapshot = {
 							id,
 							url: window.location.href,
 							createdAt: Date.now(),
-							indices: indexedControls(controls),
+							indices: new Set([
+								...indexedControls(controls),
+								...fields.map((field) => field.index),
+							]),
 						}
 						guideOverlay.clear()
 						sendResponse({
@@ -113,6 +132,12 @@ export function initPageController() {
 							context,
 							title: state.title,
 							controls,
+							fields: fields.map(({ index, label, kind, editable }) => ({
+								index,
+								label,
+								kind,
+								editable,
+							})),
 							footer: state.footer,
 						})
 					})
@@ -136,24 +161,39 @@ export function initPageController() {
 					)
 					if (typeof request?.label !== 'string' || typeof request.instruction !== 'string')
 						throw new Error('Invalid highlight request')
-					const element = guideController.getIndexedElement(index)
+					const element = guideExtraTargets.get(index) ?? guideController.getIndexedElement(index)
+					if (!element.isConnected) throw new Error('The selected control is no longer on screen')
 					const rect = element.getBoundingClientRect()
+					const style = getComputedStyle(element)
 					if (
 						rect.width < 1 ||
 						rect.height < 1 ||
-						getComputedStyle(element).visibility === 'hidden'
+						style.visibility === 'hidden' ||
+						style.display === 'none'
 					)
 						throw new Error('The selected control is not visible')
-					const label = request.label.trim().slice(0, 100)
-					const instruction = request.instruction.trim().slice(0, 220)
+					const label = request.label
+						.replace(/\[\d+\]/g, '')
+						.trim()
+						.slice(0, 100)
+					const instruction = request.instruction
+						.replace(/\[\d+\]/g, '')
+						.trim()
+						.slice(0, 220)
 					if (!label || !instruction) throw new Error('Highlight needs a label and instruction')
 					guideOverlay.show(
 						{ key: `${guideSnapshot!.id}:${index}`, label, instruction },
 						element,
 						() => {
 							guideSnapshot = null
+							guideExtraTargets.clear()
 							void chrome.runtime
 								.sendMessage({ type: 'PODOO_GUIDE_TARGET_USED' })
+								.catch(() => undefined)
+						},
+						() => {
+							void chrome.runtime
+								.sendMessage({ type: 'PODOO_GUIDE_TARGET_ENGAGED' })
 								.catch(() => undefined)
 						}
 					)

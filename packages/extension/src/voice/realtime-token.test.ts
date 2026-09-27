@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { mintRealtimeToken } from './realtime-token'
 
 describe('Realtime voice credential', () => {
-	it('mints a short-lived Realtime 2.1 credential using the configured OpenAI key', async () => {
+	it('mints a short-lived Realtime 2.1 mini credential using the configured OpenAI key', async () => {
 		const fetcher = vi.fn(async (_url: string | URL | Request, _init?: RequestInit) =>
 			Response.json({ value: 'ephemeral-test-token' }, { status: 200 })
 		)
@@ -23,7 +23,7 @@ describe('Realtime voice credential', () => {
 		const requestBody = fetcher.mock.calls[0]?.[1]?.body
 		expect(typeof requestBody).toBe('string')
 		const body = JSON.parse(requestBody as string)
-		expect(body.session).toMatchObject({ type: 'realtime', model: 'gpt-realtime-2.1' })
+		expect(body.session).toMatchObject({ type: 'realtime', model: 'gpt-realtime-2.1-mini' })
 	})
 
 	it('rejects a non-OpenAI endpoint before using the key', async () => {

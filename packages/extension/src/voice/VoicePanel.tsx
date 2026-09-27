@@ -8,6 +8,8 @@ import { activeOdooTabId, guideMessage } from './guide-client'
 import type { GuideTarget } from './guide-overlay'
 import { voiceInstructions } from './instructions'
 import { hasMicrophonePermission, openMicrophonePermissionTab } from './microphone-permission'
+import { SpokenTranscript, interruptRealtimeGuidance } from './realtime-flow'
+import { VOICE_MODEL } from './realtime-model'
 
 type VoiceStatus =
 	'idle' | 'permission' | 'connecting' | 'listening' | 'speaking' | 'responding' | 'error'
@@ -23,8 +25,13 @@ interface RealtimeEvent {
 	type: string
 	delta?: string
 	transcript?: string
+	response_id?: string
 	error?: { message?: string }
-	response?: { output?: { type: string; name?: string; call_id?: string; arguments?: string }[] }
+	response?: {
+		id?: string
+		status?: string
+		output?: { type: string; name?: string; call_id?: string; arguments?: string }[]
+	}
 }
 
 interface VoicePanelProps {
@@ -37,19 +44,23 @@ const tools = [
 		type: 'function',
 		name: 'inspect_odoo_screen',
 		description:
-			'Read the current Odoo screen and its indexed visible controls. Call before choosing a control to highlight, and again after the user acts.',
+			'Read the current Odoo screen, indexed controls and Odoo-specific fields or column headers. Call before choosing what to highlight, and again after the user acts.',
 		parameters: { type: 'object', properties: {}, additionalProperties: false },
 	},
 	{
 		type: 'function',
 		name: 'highlight_odoo_control',
 		description:
-			'Visually point to ONE control from the most recent screen inspection. This does not click or change Odoo. Speak about the control only after this succeeds.',
+			'Visually point to ONE indexed control or Odoo field from the most recent screen inspection. A field or column may be descriptive rather than clickable. This does not click or change Odoo. Speak about the target only after this succeeds.',
 		parameters: {
 			type: 'object',
 			properties: {
 				snapshot_id: { type: 'string', description: 'snapshotId returned by inspect_odoo_screen' },
-				index: { type: 'integer', description: 'Numeric index of the control in that snapshot' },
+				index: {
+					type: 'integer',
+					description:
+						'Internal index of a control or field in that snapshot. Never say this number aloud.',
+				},
 				label: { type: 'string', description: 'Short, human-readable name for the control' },
 				instruction: {
 					type: 'string',
@@ -91,7 +102,6 @@ function statusLabel(status: VoiceStatus): string {
 export function VoicePanel({ context, onClose }: VoicePanelProps) {
 	const [status, setStatus] = useState<VoiceStatus>('idle')
 	const [error, setError] = useState<string | null>(null)
-	const [caption, setCaption] = useState('')
 	const [lastAnswer, setLastAnswer] = useState('')
 	const [guideTarget, setGuideTarget] = useState<GuideTarget | null>(null)
 	const peerRef = useRef<RTCPeerConnection | null>(null)
@@ -101,7 +111,18 @@ export function VoicePanel({ context, onClose }: VoicePanelProps) {
 	const abortRef = useRef<AbortController | null>(null)
 	const guideTabRef = useRef<number | null>(null)
 	const respondingRef = useRef(false)
+	const toolProcessingRef = useRef(false)
+	const audioPlayingRef = useRef(false)
+	const playingResponseIdRef = useRef<string | null>(null)
+	const userSpeakingRef = useRef(false)
 	const pendingProgressRef = useRef(false)
+	const progressTimerRef = useRef<number | null>(null)
+	const activeResponseIdRef = useRef<string | null>(null)
+	const interruptedResponseIdsRef = useRef(new Set<string>())
+	const suppressCaptionRef = useRef(false)
+	const transcriptRef = useRef(new SpokenTranscript())
+	const transcriptResponseIdRef = useRef<string | null>(null)
+	const guideEpochRef = useRef(0)
 	const contextRef = useRef(context)
 	contextRef.current = context
 
@@ -119,14 +140,67 @@ export function VoicePanel({ context, onClose }: VoicePanelProps) {
 		streamRef.current?.getTracks().forEach((track) => track.stop())
 		streamRef.current = null
 		respondingRef.current = false
+		toolProcessingRef.current = false
+		audioPlayingRef.current = false
+		playingResponseIdRef.current = null
+		userSpeakingRef.current = false
 		pendingProgressRef.current = false
+		if (progressTimerRef.current !== null) window.clearTimeout(progressTimerRef.current)
+		progressTimerRef.current = null
+		activeResponseIdRef.current = null
+		interruptedResponseIdsRef.current.clear()
+		transcriptRef.current.clear()
+		transcriptResponseIdRef.current = null
+		guideEpochRef.current++
 		if (audioRef.current) audioRef.current.srcObject = null
 		if (guideTabRef.current !== null) void guideMessage(guideTabRef.current, 'guide_clear')
 		guideTabRef.current = null
 		setGuideTarget(null)
+		setLastAnswer('')
 	}, [])
 
 	useEffect(() => closeConnection, [closeConnection])
+
+	const interruptGuidance = useCallback(() => {
+		if (activeResponseIdRef.current)
+			interruptedResponseIdsRef.current.add(activeResponseIdRef.current)
+		if (playingResponseIdRef.current)
+			interruptedResponseIdsRef.current.add(playingResponseIdRef.current)
+		interruptRealtimeGuidance(send, {
+			responseInProgress: respondingRef.current,
+			audioPlaying: audioPlayingRef.current,
+		})
+		audioPlayingRef.current = false
+		playingResponseIdRef.current = null
+		transcriptRef.current.clear()
+		transcriptResponseIdRef.current = null
+		suppressCaptionRef.current = true
+		setLastAnswer('')
+	}, [send])
+
+	const scheduleProgress = useCallback(
+		(delay = 350) => {
+			if (progressTimerRef.current !== null) window.clearTimeout(progressTimerRef.current)
+			const attempt = () => {
+				if (!pendingProgressRef.current || channelRef.current?.readyState !== 'open') return
+				if (userSpeakingRef.current || respondingRef.current || toolProcessingRef.current) {
+					progressTimerRef.current = window.setTimeout(attempt, 100)
+					return
+				}
+				pendingProgressRef.current = false
+				respondingRef.current = true
+				send({
+					type: 'response.create',
+					response: {
+						instructions:
+							'La persona ya actuó en Odoo. Inspecciona la pantalla actual, decide qué sigue según su objetivo y señala solo el siguiente control o campo. Di una frase breve y espera.',
+					},
+				})
+			}
+			progressTimerRef.current = window.setTimeout(attempt, delay)
+		},
+		[send]
+	)
 
 	const callTool = useCallback(async (call: FunctionCall): Promise<Record<string, unknown>> => {
 		const tabId = await activeOdooTabId(contextRef.current.origin)
@@ -173,7 +247,18 @@ export function VoicePanel({ context, onClose }: VoicePanelProps) {
 
 	const finishResponse = useCallback(
 		async (event: RealtimeEvent) => {
+			if (
+				event.response?.id &&
+				activeResponseIdRef.current &&
+				event.response.id !== activeResponseIdRef.current
+			)
+				return
 			respondingRef.current = false
+			activeResponseIdRef.current = null
+			if (event.response?.status === 'cancelled') {
+				setStatus(audioPlayingRef.current ? 'responding' : 'listening')
+				return
+			}
 			const calls = (event.response?.output ?? []).filter(
 				(item): item is FunctionCall =>
 					item.type === 'function_call' &&
@@ -183,14 +268,36 @@ export function VoicePanel({ context, onClose }: VoicePanelProps) {
 			)
 			if (calls.length) {
 				setStatus('responding')
+				toolProcessingRef.current = true
+				const epoch = guideEpochRef.current
 				for (const call of calls) {
 					let result: Record<string, unknown>
-					try {
-						result = await callTool(call)
-					} catch (error) {
+					if (
+						pendingProgressRef.current ||
+						event.response?.status === 'cancelled' ||
+						interruptedResponseIdsRef.current.has(event.response?.id ?? '')
+					) {
 						result = {
 							success: false,
-							error: error instanceof Error ? error.message : String(error),
+							error: 'The person already moved on. Inspect the new screen.',
+						}
+					} else {
+						try {
+							result = await callTool(call)
+						} catch (error) {
+							result = {
+								success: false,
+								error: error instanceof Error ? error.message : String(error),
+							}
+						}
+						if (epoch !== guideEpochRef.current) {
+							if (guideTabRef.current !== null)
+								void guideMessage(guideTabRef.current, 'guide_clear')
+							setGuideTarget(null)
+							result = {
+								success: false,
+								error: 'The person already moved on. Inspect the new screen.',
+							}
 						}
 					}
 					send({
@@ -202,24 +309,20 @@ export function VoicePanel({ context, onClose }: VoicePanelProps) {
 						},
 					})
 				}
-				if (channelRef.current?.readyState === 'open') {
+				toolProcessingRef.current = false
+				if (
+					!pendingProgressRef.current &&
+					epoch === guideEpochRef.current &&
+					event.response?.status !== 'cancelled' &&
+					!interruptedResponseIdsRef.current.has(event.response?.id ?? '') &&
+					channelRef.current?.readyState === 'open'
+				) {
 					respondingRef.current = true
 					send({ type: 'response.create' })
 				}
 				return
 			}
-			setStatus('listening')
-			if (pendingProgressRef.current && channelRef.current?.readyState === 'open') {
-				pendingProgressRef.current = false
-				respondingRef.current = true
-				send({
-					type: 'response.create',
-					response: {
-						instructions:
-							'La persona usó el control resaltado. Llama a inspect_odoo_screen, decide el siguiente paso según su objetivo y la pantalla actual; si corresponde, resalta un solo control y explícalo.',
-					},
-				})
-			}
+			setStatus(audioPlayingRef.current ? 'responding' : 'listening')
 		},
 		[callTool, send]
 	)
@@ -227,7 +330,7 @@ export function VoicePanel({ context, onClose }: VoicePanelProps) {
 	const start = useCallback(async () => {
 		if (status === 'connecting' || peerRef.current) return
 		setError(null)
-		setCaption('')
+		setLastAnswer('')
 		try {
 			if (!(await hasMicrophonePermission())) {
 				setStatus('permission')
@@ -285,7 +388,7 @@ export function VoicePanel({ context, onClose }: VoicePanelProps) {
 					type: 'session.update',
 					session: {
 						type: 'realtime',
-						model: 'gpt-realtime-2.1',
+						model: VOICE_MODEL,
 						output_modalities: ['audio'],
 						instructions: voiceInstructions(contextRef.current, companyRules),
 						tools,
@@ -315,19 +418,74 @@ export function VoicePanel({ context, onClose }: VoicePanelProps) {
 						void finishResponse(event)
 						break
 					case 'input_audio_buffer.speech_started':
+						userSpeakingRef.current = true
+						pendingProgressRef.current = false
+						if (progressTimerRef.current !== null) window.clearTimeout(progressTimerRef.current)
 						setStatus('speaking')
 						break
 					case 'input_audio_buffer.speech_stopped':
-					case 'response.created':
-						respondingRef.current = true
+						userSpeakingRef.current = false
 						setStatus('responding')
 						break
+					case 'response.created':
+						respondingRef.current = true
+						activeResponseIdRef.current = event.response?.id ?? null
+						suppressCaptionRef.current = false
+						transcriptRef.current.clear()
+						transcriptResponseIdRef.current = null
+						setLastAnswer('')
+						setStatus('responding')
+						break
+					case 'output_audio_buffer.started':
+						audioPlayingRef.current = true
+						playingResponseIdRef.current = event.response_id ?? null
+						setStatus('responding')
+						break
+					case 'output_audio_buffer.stopped':
+						if (
+							event.response_id &&
+							playingResponseIdRef.current &&
+							event.response_id !== playingResponseIdRef.current
+						)
+							break
+						audioPlayingRef.current = false
+						playingResponseIdRef.current = null
+						if (
+							!suppressCaptionRef.current &&
+							!interruptedResponseIdsRef.current.has(event.response_id ?? '') &&
+							(!transcriptResponseIdRef.current ||
+								!event.response_id ||
+								transcriptResponseIdRef.current === event.response_id)
+						) {
+							transcriptRef.current.playbackStopped()
+							setLastAnswer(transcriptRef.current.visible)
+						}
+						if (!respondingRef.current) setStatus('listening')
+						break
+					case 'output_audio_buffer.cleared':
+						if (
+							event.response_id &&
+							playingResponseIdRef.current &&
+							event.response_id !== playingResponseIdRef.current
+						)
+							break
+						audioPlayingRef.current = false
+						playingResponseIdRef.current = null
+						transcriptRef.current.clear()
+						transcriptResponseIdRef.current = null
+						setLastAnswer('')
+						if (!respondingRef.current) setStatus('listening')
+						break
 					case 'response.output_audio_transcript.delta':
-						setCaption((text) => text + (event.delta ?? ''))
 						break
 					case 'response.output_audio_transcript.done':
-						setLastAnswer(event.transcript ?? '')
-						setCaption('')
+						if (
+							!suppressCaptionRef.current &&
+							!interruptedResponseIdsRef.current.has(event.response_id ?? '')
+						) {
+							transcriptRef.current.complete(event.transcript ?? '')
+							transcriptResponseIdRef.current = event.response_id ?? null
+						}
 						break
 					case 'error':
 						setError(event.error?.message || 'La sesión de voz devolvió un error.')
@@ -370,36 +528,26 @@ export function VoicePanel({ context, onClose }: VoicePanelProps) {
 				sender.url === chrome.runtime.getURL('mic-permission.html')
 			)
 				void start()
-			if (message.type === 'PODOO_GUIDE_TARGET_USED' && sender.tab?.id === guideTabRef.current) {
+			if (
+				(message.type === 'PODOO_GUIDE_TARGET_USED' ||
+					message.type === 'PODOO_GUIDE_TARGET_ENGAGED') &&
+				sender.tab?.id === guideTabRef.current
+			) {
+				guideEpochRef.current++
+				if (message.type === 'PODOO_GUIDE_TARGET_USED') pendingProgressRef.current = true
+				interruptGuidance()
+				if (message.type !== 'PODOO_GUIDE_TARGET_USED') return
 				setGuideTarget(null)
-				pendingProgressRef.current = true
-				window.setTimeout(() => {
-					if (
-						pendingProgressRef.current &&
-						!respondingRef.current &&
-						channelRef.current?.readyState === 'open'
-					) {
-						pendingProgressRef.current = false
-						respondingRef.current = true
-						send({
-							type: 'response.create',
-							response: {
-								instructions:
-									'La persona usó el control resaltado. Llama a inspect_odoo_screen y decide qué control mostrar después según el objetivo y la pantalla actual. Explica solo el siguiente paso.',
-							},
-						})
-					}
-				}, 600)
+				scheduleProgress(450)
 			}
 		}
 		chrome.runtime.onMessage.addListener(onMessage)
 		return () => chrome.runtime.onMessage.removeListener(onMessage)
-	}, [start, send])
+	}, [start, interruptGuidance, scheduleProgress])
 
 	const stop = () => {
 		closeConnection()
 		setStatus('idle')
-		setCaption('')
 	}
 
 	return (
@@ -408,7 +556,7 @@ export function VoicePanel({ context, onClose }: VoicePanelProps) {
 			<div className="flex items-start justify-between gap-3">
 				<div>
 					<div className="flex items-center gap-2 text-sm font-semibold">
-						<Headphones className="size-4 text-primary" /> Voz en vivo · Realtime 2.1
+						<Headphones className="size-4 text-primary" /> Voz en vivo · Realtime 2.1 mini
 					</div>
 					<p className="mt-1 text-xs text-muted-foreground">
 						Pregunta lo que quieras sobre Odoo. Para guiarte, Podoo señala el siguiente control en
@@ -464,12 +612,12 @@ export function VoicePanel({ context, onClose }: VoicePanelProps) {
 					{statusLabel(status)}
 				</span>
 			</div>
-			{(caption || lastAnswer) && (
+			{lastAnswer && (
 				<p
 					className="mt-3 rounded-lg border bg-card p-3 text-sm leading-relaxed"
 					aria-live="polite"
 				>
-					<strong>Podoo:</strong> {caption || lastAnswer}
+					<strong>Podoo:</strong> {lastAnswer}
 				</p>
 			)}
 			{error && (

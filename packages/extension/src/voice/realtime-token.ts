@@ -1,3 +1,5 @@
+import { VOICE_MODEL } from './realtime-model'
+
 const OPENAI_BASE_URL = 'https://api.openai.com/v1'
 
 interface StoredLlmConfig {
@@ -25,7 +27,7 @@ export async function mintRealtimeToken(
 		body: JSON.stringify({
 			session: {
 				type: 'realtime',
-				model: 'gpt-realtime-2.1',
+				model: VOICE_MODEL,
 				output_modalities: ['audio'],
 				audio: { output: { voice: 'marin' } },
 			},

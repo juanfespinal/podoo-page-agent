@@ -8,6 +8,13 @@ export default defineBackground(() => {
 	// message proxy
 
 	chrome.runtime.onMessage.addListener((message, sender, sendResponse): true | undefined => {
+		if (
+			message.type === 'PODOO_GUIDE_TARGET_USED' ||
+			message.type === 'PODOO_GUIDE_TARGET_ENGAGED'
+		) {
+			sendResponse({ ok: Boolean(sender.tab?.id) })
+			return
+		}
 		if (message.type === 'PODOO_MIC_PERMISSION_GRANTED') {
 			sendResponse({ ok: sender.url === chrome.runtime.getURL('mic-permission.html') })
 			return

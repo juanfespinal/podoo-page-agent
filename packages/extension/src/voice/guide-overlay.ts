@@ -16,7 +16,12 @@ export class GuideOverlay {
 	private onClick: ((event: MouseEvent) => void) | null = null
 	private onChange: ((event: Event) => void) | null = null
 
-	show(step: GuideTarget, element: HTMLElement, onTargetUsed: () => void): void {
+	show(
+		step: GuideTarget,
+		element: HTMLElement,
+		onTargetUsed: () => void,
+		onTargetEngaged?: () => void
+	): void {
 		this.refreshedAt = Date.now()
 		if (this.target === element && this.key === step.key && this.host?.isConnected) return
 		this.clear()
@@ -43,15 +48,25 @@ export class GuideOverlay {
 		this.bubble = bubble
 		element.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'smooth' })
 		this.position()
+		let engaged = false
 		this.onClick = (event) => {
 			if (this.target && event.target instanceof Node && this.target.contains(event.target)) {
-				const isEditable =
-					this.target.matches('input, textarea, select, [contenteditable="true"]') ||
-					Boolean(this.target.querySelector('input, textarea, select, [contenteditable="true"]'))
+				const isEditable = this.target.matches('input, textarea, select, [contenteditable="true"]')
 				if (!isEditable) {
 					this.clear()
 					onTargetUsed()
+				} else if (!engaged) {
+					engaged = true
+					onTargetEngaged?.()
 				}
+			} else if (
+				event.target instanceof Element &&
+				event.target.closest(
+					'.o_web_client button, .o_web_client a, .o_web_client [role="button"], .o_web_client input, .o_web_client select, .o_web_client .o_field_widget'
+				)
+			) {
+				this.clear()
+				onTargetUsed()
 			}
 		}
 		document.addEventListener('click', this.onClick, true)
@@ -64,7 +79,12 @@ export class GuideOverlay {
 		document.addEventListener('change', onChange, true)
 		this.onChange = onChange
 		this.timer = window.setInterval(() => {
-			if (Date.now() - this.refreshedAt > 120000 || !this.target?.isConnected) {
+			if (this.target && !this.target.isConnected) {
+				this.clear()
+				onTargetUsed()
+				return
+			}
+			if (Date.now() - this.refreshedAt > 120000) {
 				this.clear()
 				return
 			}

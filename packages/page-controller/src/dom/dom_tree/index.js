@@ -1451,8 +1451,8 @@ export default (
 					} else {
 						highlightElement(node, nodeData.highlightIndex, parentIframe)
 					}
-					return true // Successfully highlighted
 				}
+				return true // Indexed whether or not numeric overlays are drawn.
 			} else {
 				// console.log(`Skipping highlight for ${nodeData.tagName} (outside viewport)`);
 			}
