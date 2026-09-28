@@ -8,7 +8,15 @@ import { activeOdooTabId, guideMessage } from './guide-client'
 import type { GuideTarget } from './guide-overlay'
 import { voiceInstructions } from './instructions'
 import { hasMicrophonePermission, openMicrophonePermissionTab } from './microphone-permission'
-import { SpokenTranscript, interruptRealtimeGuidance } from './realtime-flow'
+import {
+	type OdooScreenInspection,
+	SpokenTranscript,
+	guidanceTurnDetection,
+	interruptRealtimeGuidance,
+	planRealtimeGuidance,
+	shouldCancelGuidanceResponse,
+	speakRealtimeGuidance,
+} from './realtime-flow'
 import { VOICE_MODEL } from './realtime-model'
 
 type VoiceStatus =
@@ -38,47 +46,6 @@ interface VoicePanelProps {
 	context: OdooPageContext
 	onClose: () => void
 }
-
-const tools = [
-	{
-		type: 'function',
-		name: 'inspect_odoo_screen',
-		description:
-			'Read the current Odoo screen, indexed controls and Odoo-specific fields or column headers. Call before choosing what to highlight, and again after the user acts.',
-		parameters: { type: 'object', properties: {}, additionalProperties: false },
-	},
-	{
-		type: 'function',
-		name: 'highlight_odoo_control',
-		description:
-			'Visually point to ONE indexed control or Odoo field from the most recent screen inspection. A field or column may be descriptive rather than clickable. This does not click or change Odoo. Speak about the target only after this succeeds.',
-		parameters: {
-			type: 'object',
-			properties: {
-				snapshot_id: { type: 'string', description: 'snapshotId returned by inspect_odoo_screen' },
-				index: {
-					type: 'integer',
-					description:
-						'Internal index of a control or field in that snapshot. Never say this number aloud.',
-				},
-				label: { type: 'string', description: 'Short, human-readable name for the control' },
-				instruction: {
-					type: 'string',
-					description: 'One short instruction explaining what the person can do here',
-				},
-			},
-			required: ['snapshot_id', 'index', 'label', 'instruction'],
-			additionalProperties: false,
-		},
-	},
-	{
-		type: 'function',
-		name: 'clear_odoo_highlight',
-		description:
-			'Remove the visual highlight when changing topics or answering a conceptual question.',
-		parameters: { type: 'object', properties: {}, additionalProperties: false },
-	},
-]
 
 function statusLabel(status: VoiceStatus): string {
 	switch (status) {
@@ -123,6 +90,9 @@ export function VoicePanel({ context, onClose }: VoicePanelProps) {
 	const transcriptRef = useRef(new SpokenTranscript())
 	const transcriptResponseIdRef = useRef<string | null>(null)
 	const guideEpochRef = useRef(0)
+	const responseEpochRef = useRef(0)
+	const decisionPendingRef = useRef(false)
+	const guideRetriesRef = useRef(0)
 	const contextRef = useRef(context)
 	contextRef.current = context
 
@@ -152,6 +122,9 @@ export function VoicePanel({ context, onClose }: VoicePanelProps) {
 		transcriptRef.current.clear()
 		transcriptResponseIdRef.current = null
 		guideEpochRef.current++
+		responseEpochRef.current = guideEpochRef.current
+		decisionPendingRef.current = false
+		guideRetriesRef.current = 0
 		if (audioRef.current) audioRef.current.srcObject = null
 		if (guideTabRef.current !== null) void guideMessage(guideTabRef.current, 'guide_clear')
 		guideTabRef.current = null
@@ -167,7 +140,7 @@ export function VoicePanel({ context, onClose }: VoicePanelProps) {
 		if (playingResponseIdRef.current)
 			interruptedResponseIdsRef.current.add(playingResponseIdRef.current)
 		interruptRealtimeGuidance(send, {
-			responseInProgress: respondingRef.current,
+			responseInProgress: activeResponseIdRef.current !== null,
 			audioPlaying: audioPlayingRef.current,
 		})
 		audioPlayingRef.current = false
@@ -176,6 +149,33 @@ export function VoicePanel({ context, onClose }: VoicePanelProps) {
 		transcriptResponseIdRef.current = null
 		suppressCaptionRef.current = true
 		setLastAnswer('')
+	}, [send])
+
+	const startGuideTurn = useCallback(async () => {
+		const epoch = guideEpochRef.current
+		respondingRef.current = true
+		setStatus('responding')
+		try {
+			const tabId = await activeOdooTabId(contextRef.current.origin)
+			if (tabId !== null) guideTabRef.current = tabId
+			const screen: OdooScreenInspection =
+				tabId === null
+					? { success: false, error: 'La pestaña de Odoo no está abierta.' }
+					: ((await guideMessage(tabId, 'guide_inspect')) as unknown as OdooScreenInspection)
+			if (epoch !== guideEpochRef.current || userSpeakingRef.current) {
+				respondingRef.current = false
+				return
+			}
+			setGuideTarget(null)
+			decisionPendingRef.current = true
+			responseEpochRef.current = epoch
+			send(planRealtimeGuidance(screen))
+		} catch (cause) {
+			respondingRef.current = false
+			if (epoch !== guideEpochRef.current) return
+			setError(cause instanceof Error ? cause.message : String(cause))
+			setStatus('listening')
+		}
 	}, [send])
 
 	const scheduleProgress = useCallback(
@@ -188,61 +188,52 @@ export function VoicePanel({ context, onClose }: VoicePanelProps) {
 					return
 				}
 				pendingProgressRef.current = false
-				respondingRef.current = true
-				send({
-					type: 'response.create',
-					response: {
-						instructions:
-							'La persona ya actuó en Odoo. Inspecciona la pantalla actual, decide qué sigue según su objetivo y señala solo el siguiente control o campo. Di una frase breve y espera.',
-					},
-				})
+				void startGuideTurn()
 			}
 			progressTimerRef.current = window.setTimeout(attempt, delay)
 		},
-		[send]
+		[startGuideTurn]
 	)
 
 	const callTool = useCallback(async (call: FunctionCall): Promise<Record<string, unknown>> => {
-		const tabId = await activeOdooTabId(contextRef.current.origin)
-		if (tabId === null) return { success: false, error: 'Open the Odoo tab for this conversation.' }
-		guideTabRef.current = tabId
+		if (call.name !== 'choose_odoo_response')
+			return { success: false, error: `Unknown tool: ${call.name}` }
 		let args: Record<string, unknown>
 		try {
 			args = JSON.parse(call.arguments || '{}') as Record<string, unknown>
 		} catch {
 			return { success: false, error: 'Invalid tool arguments.' }
 		}
-		switch (call.name) {
-			case 'inspect_odoo_screen': {
-				setGuideTarget(null)
-				const result = await guideMessage(tabId, 'guide_inspect')
-				const key = companyRulesStorageKey(contextRef.current.origin)
-				const rules = (await chrome.storage.local.get(key))[key]
-				return { ...result, companyRules: typeof rules === 'string' ? rules.slice(0, 4000) : '' }
-			}
-			case 'highlight_odoo_control': {
-				const result = await guideMessage(tabId, 'guide_highlight', [
-					{
-						snapshotId: args.snapshot_id,
-						index: args.index,
-						label: args.label,
-						instruction: args.instruction,
-					},
-				])
-				if (result.success === true)
-					setGuideTarget({
-						key: `${args.snapshot_id}:${args.index}`,
-						label: String(result.label),
-						instruction: String(result.instruction),
-					})
-				return result
-			}
-			case 'clear_odoo_highlight':
-				setGuideTarget(null)
-				return guideMessage(tabId, 'guide_clear')
-			default:
-				return { success: false, error: `Unknown tool: ${call.name}` }
+		if (args.mode === 'explain') {
+			if (typeof args.speech !== 'string' || !args.speech.trim())
+				return { success: false, error: 'A spoken answer is required.' }
+			const tabId = guideTabRef.current
+			setGuideTarget(null)
+			if (tabId !== null) await guideMessage(tabId, 'guide_clear')
+			return { success: true, speech: args.speech.trim().slice(0, 1200) }
 		}
+		if (args.mode === 'guide') {
+			const tabId = guideTabRef.current
+			if (tabId === null) return { success: false, error: 'Open the Odoo tab.' }
+			const result = await guideMessage(tabId, 'guide_highlight', [
+				{
+					snapshotId: args.snapshot_id,
+					index: args.index,
+					label: args.label,
+					instruction: args.instruction,
+				},
+			])
+			if (result.success === true) {
+				setGuideTarget({
+					key: `${args.snapshot_id}:${args.index}`,
+					label: String(result.label),
+					instruction: String(result.instruction),
+				})
+				return { ...result, speech: String(result.instruction).slice(0, 220) }
+			}
+			return result
+		}
+		return { success: false, error: 'Invalid response mode.' }
 	}, [])
 
 	const finishResponse = useCallback(
@@ -253,6 +244,21 @@ export function VoicePanel({ context, onClose }: VoicePanelProps) {
 				event.response.id !== activeResponseIdRef.current
 			)
 				return
+			if (
+				shouldCancelGuidanceResponse(
+					responseEpochRef.current,
+					guideEpochRef.current,
+					userSpeakingRef.current
+				)
+			) {
+				respondingRef.current = false
+				activeResponseIdRef.current = null
+				decisionPendingRef.current = false
+				setStatus(userSpeakingRef.current ? 'speaking' : 'listening')
+				return
+			}
+			const wasDecision = decisionPendingRef.current
+			decisionPendingRef.current = false
 			respondingRef.current = false
 			activeResponseIdRef.current = null
 			if (event.response?.status === 'cancelled') {
@@ -270,16 +276,21 @@ export function VoicePanel({ context, onClose }: VoicePanelProps) {
 				setStatus('responding')
 				toolProcessingRef.current = true
 				const epoch = guideEpochRef.current
-				for (const call of calls) {
+				let speech: string | null = null
+				for (const [position, call] of calls.entries()) {
 					let result: Record<string, unknown>
 					if (
+						position > 0 ||
 						pendingProgressRef.current ||
 						event.response?.status === 'cancelled' ||
 						interruptedResponseIdsRef.current.has(event.response?.id ?? '')
 					) {
 						result = {
 							success: false,
-							error: 'The person already moved on. Inspect the new screen.',
+							error:
+								position > 0
+									? 'Choose only one control at a time.'
+									: 'The person already moved on. Inspect the new screen.',
 						}
 					} else {
 						try {
@@ -300,6 +311,7 @@ export function VoicePanel({ context, onClose }: VoicePanelProps) {
 							}
 						}
 					}
+					if (result.success === true && typeof result.speech === 'string') speech = result.speech
 					send({
 						type: 'conversation.item.create',
 						item: {
@@ -317,14 +329,35 @@ export function VoicePanel({ context, onClose }: VoicePanelProps) {
 					!interruptedResponseIdsRef.current.has(event.response?.id ?? '') &&
 					channelRef.current?.readyState === 'open'
 				) {
-					respondingRef.current = true
-					send({ type: 'response.create' })
+					if (speech) {
+						guideRetriesRef.current = 0
+						respondingRef.current = true
+						responseEpochRef.current = epoch
+						send(speakRealtimeGuidance(speech))
+					} else if (wasDecision && guideRetriesRef.current < 2) {
+						guideRetriesRef.current++
+						pendingProgressRef.current = true
+						scheduleProgress(100)
+					} else {
+						setError(
+							'No pude ubicar el siguiente control en esta pantalla. Puedes intentarlo de nuevo.'
+						)
+						setStatus('listening')
+					}
 				}
 				return
 			}
+			if (wasDecision && guideRetriesRef.current < 2) {
+				guideRetriesRef.current++
+				pendingProgressRef.current = true
+				scheduleProgress(100)
+				return
+			}
+			if (wasDecision)
+				setError('No pude decidir un paso seguro en esta pantalla. Puedes intentarlo de nuevo.')
 			setStatus(audioPlayingRef.current ? 'responding' : 'listening')
 		},
-		[callTool, send]
+		[callTool, scheduleProgress, send]
 	)
 
 	const start = useCallback(async () => {
@@ -391,10 +424,8 @@ export function VoicePanel({ context, onClose }: VoicePanelProps) {
 						model: VOICE_MODEL,
 						output_modalities: ['audio'],
 						instructions: voiceInstructions(contextRef.current, companyRules),
-						tools,
-						tool_choice: 'auto',
 						audio: {
-							input: { turn_detection: { type: 'semantic_vad' } },
+							input: { turn_detection: guidanceTurnDetection },
 							output: { voice: 'marin' },
 						},
 					},
@@ -418,18 +449,36 @@ export function VoicePanel({ context, onClose }: VoicePanelProps) {
 						void finishResponse(event)
 						break
 					case 'input_audio_buffer.speech_started':
+						guideEpochRef.current++
 						userSpeakingRef.current = true
 						pendingProgressRef.current = false
 						if (progressTimerRef.current !== null) window.clearTimeout(progressTimerRef.current)
+						interruptGuidance()
 						setStatus('speaking')
 						break
 					case 'input_audio_buffer.speech_stopped':
 						userSpeakingRef.current = false
 						setStatus('responding')
 						break
+					case 'input_audio_buffer.committed':
+						guideRetriesRef.current = 0
+						pendingProgressRef.current = true
+						scheduleProgress(0)
+						break
 					case 'response.created':
 						respondingRef.current = true
 						activeResponseIdRef.current = event.response?.id ?? null
+						if (
+							shouldCancelGuidanceResponse(
+								responseEpochRef.current,
+								guideEpochRef.current,
+								userSpeakingRef.current
+							)
+						) {
+							if (event.response?.id) interruptedResponseIdsRef.current.add(event.response.id)
+							send({ type: 'response.cancel' })
+							break
+						}
 						suppressCaptionRef.current = false
 						transcriptRef.current.clear()
 						transcriptResponseIdRef.current = null
@@ -519,7 +568,7 @@ export function VoicePanel({ context, onClose }: VoicePanelProps) {
 			setStatus('error')
 			closeConnection()
 		}
-	}, [status, closeConnection, finishResponse, send])
+	}, [status, closeConnection, finishResponse, interruptGuidance, scheduleProgress, send])
 
 	useEffect(() => {
 		const onMessage = (message: { type?: string }, sender: chrome.runtime.MessageSender) => {
@@ -534,7 +583,10 @@ export function VoicePanel({ context, onClose }: VoicePanelProps) {
 				sender.tab?.id === guideTabRef.current
 			) {
 				guideEpochRef.current++
-				if (message.type === 'PODOO_GUIDE_TARGET_USED') pendingProgressRef.current = true
+				if (message.type === 'PODOO_GUIDE_TARGET_USED') {
+					guideRetriesRef.current = 0
+					pendingProgressRef.current = true
+				}
 				interruptGuidance()
 				if (message.type !== 'PODOO_GUIDE_TARGET_USED') return
 				setGuideTarget(null)
