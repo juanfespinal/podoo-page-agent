@@ -1,15 +1,15 @@
 import { AlertCircle, Headphones, LoaderCircle, Mic, MicOff, X } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 
+import { CONTENT_SCRIPT_MISSING, RELOAD_ODOO_TAB_MESSAGE } from '@/agent/pageControlErrors'
 import { Button } from '@/components/ui/button'
 import { type OdooPageContext, companyRulesStorageKey } from '@/odoo/context'
 
-import { activeOdooTabId, guideMessage } from './guide-client'
+import { guideMessage, inspectOdooScreen } from './guide-client'
 import type { GuideTarget } from './guide-overlay'
 import { voiceInstructions } from './instructions'
 import { hasMicrophonePermission, openMicrophonePermissionTab } from './microphone-permission'
 import {
-	type OdooScreenInspection,
 	SpokenTranscript,
 	guidanceTurnDetection,
 	interruptRealtimeGuidance,
@@ -156,20 +156,30 @@ export function VoicePanel({ context, onClose }: VoicePanelProps) {
 		respondingRef.current = true
 		setStatus('responding')
 		try {
-			const tabId = await activeOdooTabId(contextRef.current.origin)
+			const { tabId, screen } = await inspectOdooScreen(
+				contextRef.current.origin,
+				contextRef.current.path
+			)
 			if (tabId !== null) guideTabRef.current = tabId
-			const screen: OdooScreenInspection =
-				tabId === null
-					? { success: false, error: 'La pestaña de Odoo no está abierta.' }
-					: ((await guideMessage(tabId, 'guide_inspect')) as unknown as OdooScreenInspection)
 			if (epoch !== guideEpochRef.current || userSpeakingRef.current) {
 				respondingRef.current = false
 				return
 			}
+			if (!screen.success) {
+				respondingRef.current = false
+				setError(
+					screen.code === CONTENT_SCRIPT_MISSING
+						? RELOAD_ODOO_TAB_MESSAGE
+						: `No pude leer la pantalla de Odoo: ${screen.error ?? 'error desconocido'}`
+				)
+				setStatus('listening')
+				return
+			}
+			setError(null)
 			setGuideTarget(null)
 			decisionPendingRef.current = true
 			responseEpochRef.current = epoch
-			send(planRealtimeGuidance(screen))
+			send(planRealtimeGuidance({ ...screen, success: true }))
 		} catch (cause) {
 			respondingRef.current = false
 			if (epoch !== guideEpochRef.current) return

@@ -24,7 +24,7 @@ describe('RemotePageController on an existing Odoo tab', () => {
 		} as unknown as TabsController
 
 		const controller = new RemotePageController(tabsController)
-		await expect(controller.getOdooContext()).rejects.toThrow('Reload the Odoo tab')
-		await expect(controller.getBrowserState()).rejects.toThrow('Reload the Odoo tab')
+		await expect(controller.getOdooContext()).rejects.toThrow('Actualiza la pestaña de Odoo')
+		await expect(controller.getBrowserState()).rejects.toThrow('Actualiza la pestaña de Odoo')
 	})
 })

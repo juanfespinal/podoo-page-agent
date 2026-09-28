@@ -1,6 +1,6 @@
 export const CONTENT_SCRIPT_MISSING = 'CONTENT_SCRIPT_MISSING'
 export const RELOAD_ODOO_TAB_MESSAGE =
-	'Reload the Odoo tab after installing or updating Podoo Copilot, then retry. If this continues, allow Podoo Copilot access to the Odoo site in Chrome extension settings.'
+	'Actualiza la pestaña de Odoo después de actualizar Podoo y vuelve a intentarlo. Si continúa, permite a Podoo acceder a este sitio en la configuración de extensiones de Chrome.'
 
 export function isMissingContentScript(error: unknown): boolean {
 	const message = error instanceof Error ? error.message : String(error)

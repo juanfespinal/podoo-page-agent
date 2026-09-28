@@ -33,6 +33,7 @@ export const guidanceDecisionTool = {
 
 export interface OdooScreenInspection {
 	success: boolean
+	code?: string
 	snapshotId?: string
 	context?: unknown
 	title?: string
@@ -43,7 +44,7 @@ export interface OdooScreenInspection {
 }
 
 /** The model decides silently from a fresh Odoo snapshot; no audio exists yet. */
-export function planRealtimeGuidance(screen: OdooScreenInspection) {
+export function planRealtimeGuidance(screen: OdooScreenInspection & { success: true }) {
 	return {
 		type: 'response.create',
 		response: {
@@ -52,6 +53,7 @@ export function planRealtimeGuidance(screen: OdooScreenInspection) {
 			tool_choice: 'required',
 			instructions: [
 				'Elige la siguiente respuesta mediante choose_odoo_response. No generes un mensaje aparte.',
+				'La pantalla de Odoo ya se leyó correctamente. Nunca digas que no puedes verla; si no encuentras el control, describe la vista disponible y el dato que falta.',
 				'Si pidió ayuda para usar Odoo, modo guide: elige un solo índice visible y proporciona snapshot_id, index, label e instruction. La instrucción debe tener máximo 18 palabras. No digas que vas a mirar, comprobar o averiguar.',
 				'Si hizo una pregunta conceptual sin pedir un paso en la interfaz, modo explain: proporciona speech con la respuesta directa y sin índice.',
 				'Si la pantalla no ofrece el control necesario, modo explain: explica concretamente qué falta sin inventar una ruta.',
