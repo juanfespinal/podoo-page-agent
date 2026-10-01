@@ -1,6 +1,9 @@
 import type { BrowserState } from '@page-agent/page-controller'
 
+import type { OdooPageContext } from '@/odoo/context'
+
 import type { TabsController } from './TabsController'
+import { pageControlError } from './pageControlErrors'
 
 const PREFIX = '[RemotePageController]'
 
@@ -46,6 +49,17 @@ export class RemotePageController {
 		return title || ''
 	}
 
+	async getOdooContext(): Promise<OdooPageContext | null> {
+		if (!this.currentTabId || !isContentScriptAllowed(await this.getCurrentUrl())) return null
+		const response = await sendMessage({
+			type: 'PAGE_CONTROL',
+			action: 'get_odoo_context',
+			targetTabId: this.currentTabId,
+		})
+		if (!response || response.success === false) throw pageControlError(response)
+		return response as OdooPageContext | null
+	}
+
 	async getLastUpdateTime(): Promise<number> {
 		if (!this.currentTabId) throw new Error('tabsController not initialized.')
 		return sendMessage({
@@ -71,11 +85,13 @@ export class RemotePageController {
 				footer: '',
 			}
 		} else {
-			browserState = await sendMessage({
+			const response = await sendMessage({
 				type: 'PAGE_CONTROL',
 				action: 'get_browser_state',
 				targetTabId: this.currentTabId,
 			})
+			if (!response || response.success === false) throw pageControlError(response)
+			browserState = response
 		}
 
 		const sum = await this.tabsController.summarizeTabs()

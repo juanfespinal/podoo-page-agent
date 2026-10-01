@@ -73,15 +73,18 @@ export function modelPatch(body: Record<string, any>, baseURL?: string) {
 			body.verbosity = 'low'
 		}
 
-		// Since gpt-5.4, /chat/completions rejects any explicit reasoning_effort
-		// when function tools are present. Newer models are expected to follow.
+		// GPT-6 Sol and Luna require reasoning_effort=none for function tools
+		// in Chat Completions. Other newer models may reject this parameter.
 		// - gpt-5.1 / gpt-5.2 can fully disable reasoning
 		// - gpt-5 / -mini / -nano bottom out at "minimal"
-		// - everything else (gpt-4.x, chat-latest, gpt-5.4+) must not receive it
+		// - everything else (gpt-4.x, chat-latest, gpt-5.4+, GPT-6 Astra) must not receive it
 		if (modelName.includes('chat-latest')) {
 			debug('Patch chat-latest: omit reasoning_effort and temperature')
 			delete body.reasoning_effort
 			delete body.temperature
+		} else if (/^gpt-6-(sol|luna)(-|$)/.test(modelName)) {
+			debug('Patch GPT-6 Sol/Luna: reasoning_effort=none for Chat Completions tools')
+			body.reasoning_effort = 'none'
 		} else if (/^gpt-5[12](-|$)/.test(modelName)) {
 			debug('Patch GPT-5.1/5.2: reasoning_effort=none')
 			body.reasoning_effort = 'none'

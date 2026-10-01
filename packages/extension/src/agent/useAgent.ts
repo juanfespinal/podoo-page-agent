@@ -11,8 +11,11 @@ import type {
 import type { LLMConfig } from '@page-agent/llms'
 import { useCallback, useEffect, useRef, useState } from 'react'
 
+import type { OdooMode } from '@/odoo/agent-tools'
+import type { ConversationTurn } from '@/odoo/conversation'
+
 import { MultiPageAgent } from './MultiPageAgent'
-import { DEMO_CONFIG, migrateLegacyEndpoint } from './constants'
+import { DEMO_CONFIG, isTestingEndpoint, migrateLegacyEndpoint } from './constants'
 
 /** Language preference: undefined means follow system */
 export type LanguagePreference = SupportedLanguage | undefined
@@ -23,6 +26,7 @@ export interface AdvancedConfig {
 	experimentalLlmsTxt?: boolean
 	experimentalIncludeAllTabs?: boolean
 	disableNamedToolChoice?: boolean
+	odooMode?: OdooMode
 }
 
 export interface ExtConfig extends LLMConfig, AdvancedConfig {
@@ -35,8 +39,14 @@ export interface UseAgentResult {
 	activity: AgentActivity | null
 	currentTask: string
 	config: ExtConfig | null
-	execute: (task: string) => Promise<ExecutionResult>
+	approval: string | null
+	taskError: string | null
+	execute: (
+		task: string,
+		conversation?: { origin: string; turns: ConversationTurn[] }
+	) => Promise<ExecutionResult>
 	stop: () => void
+	answerApproval: (approved: boolean) => void
 	configure: (config: ExtConfig) => Promise<void>
 }
 
@@ -47,6 +57,32 @@ export function useAgent(): UseAgentResult {
 	const [activity, setActivity] = useState<AgentActivity | null>(null)
 	const [currentTask, setCurrentTask] = useState('')
 	const [config, setConfig] = useState<ExtConfig | null>(null)
+	const [approval, setApproval] = useState<string | null>(null)
+	const [taskError, setTaskError] = useState<string | null>(null)
+	const approvalRef = useRef<{ finish: (approved: boolean) => void } | null>(null)
+
+	const answerApproval = useCallback((approved: boolean) => {
+		approvalRef.current?.finish(approved)
+	}, [])
+
+	const requestApproval = useCallback((question: string, signal: AbortSignal) => {
+		return new Promise<boolean>((resolve) => {
+			if (signal.aborted || approvalRef.current) {
+				resolve(false)
+				return
+			}
+			const finish = (approved: boolean) => {
+				signal.removeEventListener('abort', onAbort)
+				approvalRef.current = null
+				setApproval(null)
+				resolve(approved)
+			}
+			const onAbort = () => finish(false)
+			approvalRef.current = { finish }
+			setApproval(question)
+			signal.addEventListener('abort', onAbort, { once: true })
+		})
+	}, [])
 
 	useEffect(() => {
 		chrome.storage.local.get(['llmConfig', 'language', 'advancedConfig']).then((result) => {
@@ -73,6 +109,8 @@ export function useAgent(): UseAgentResult {
 		const { systemInstruction, ...agentConfig } = config
 		const agent = new MultiPageAgent({
 			...agentConfig,
+			odooMode: config.odooMode ?? 'explain',
+			requestApproval,
 			instructions: systemInstruction ? { system: systemInstruction } : undefined,
 		})
 		agentRef.current = agent
@@ -99,25 +137,42 @@ export function useAgent(): UseAgentResult {
 		agent.addEventListener('activity', handleActivity)
 
 		return () => {
+			answerApproval(false)
 			agent.removeEventListener('statuschange', handleStatusChange)
 			agent.removeEventListener('historychange', handleHistoryChange)
 			agent.removeEventListener('activity', handleActivity)
 			agent.dispose()
 		}
-	}, [config])
+	}, [config, requestApproval, answerApproval])
 
-	const execute = useCallback(async (task: string) => {
-		const agent = agentRef.current
-		if (!agent) throw new Error('Agent not initialized')
+	const execute = useCallback(
+		async (task: string, conversation?: { origin: string; turns: ConversationTurn[] }) => {
+			const agent = agentRef.current
+			if (!agent) throw new Error('Agent not initialized')
 
-		setCurrentTask(task)
-		setHistory([])
-		return agent.execute(task)
-	}, [])
+			setCurrentTask(task)
+			setHistory([])
+			setTaskError(null)
+			try {
+				if (!config || isTestingEndpoint(config.baseURL)) {
+					throw new Error(
+						'Configure an approved model endpoint in Settings before sending Odoo page data.'
+					)
+				}
+				if (conversation) agent.setConversationContext(conversation.origin, conversation.turns)
+				return await agent.execute(task)
+			} catch (error) {
+				setTaskError(error instanceof Error ? error.message : String(error))
+				throw error
+			}
+		},
+		[config]
+	)
 
 	const stop = useCallback(() => {
+		answerApproval(false)
 		agentRef.current?.stop()
-	}, [])
+	}, [answerApproval])
 
 	const configure = useCallback(
 		async ({
@@ -127,6 +182,7 @@ export function useAgent(): UseAgentResult {
 			experimentalLlmsTxt,
 			experimentalIncludeAllTabs,
 			disableNamedToolChoice,
+			odooMode,
 			...llmConfig
 		}: ExtConfig) => {
 			await chrome.storage.local.set({ llmConfig })
@@ -141,6 +197,7 @@ export function useAgent(): UseAgentResult {
 				experimentalLlmsTxt,
 				experimentalIncludeAllTabs,
 				disableNamedToolChoice,
+				odooMode,
 			}
 			await chrome.storage.local.set({ advancedConfig })
 			setConfig({ ...llmConfig, ...advancedConfig, language })
@@ -154,8 +211,11 @@ export function useAgent(): UseAgentResult {
 		activity,
 		currentTask,
 		config,
+		approval,
+		taskError,
 		execute,
 		stop,
+		answerApproval,
 		configure,
 	}
 }

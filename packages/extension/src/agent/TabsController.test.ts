@@ -1,6 +1,41 @@
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { TabsController } from './TabsController'
+
+afterEach(() => vi.unstubAllGlobals())
+
+describe('TabsController in Odoo mode', () => {
+	it('tracks the active tab without creating a visible Chrome tab group', async () => {
+		const sendMessage = vi.fn(async (message: { action: string }) => {
+			if (message.action === 'get_active_tab') {
+				return { success: true, tab: { id: 7, windowId: 2 } }
+			}
+			if (message.action === 'get_tab_info') {
+				return {
+					id: 7,
+					windowId: 2,
+					url: 'https://client.odoo.com/odoo/sales',
+					title: 'Sales',
+					status: 'complete',
+				}
+			}
+			throw new Error(`Unexpected action: ${message.action}`)
+		})
+		vi.stubGlobal('chrome', {
+			windows: { getCurrent: async () => ({ id: 2 }) },
+			runtime: { sendMessage },
+			storage: { local: { set: async () => {} } },
+		})
+
+		const controller = new TabsController()
+		await controller.init('What is this?', { groupInitialTab: false })
+
+		expect(controller.currentTabId).toBe(7)
+		expect(sendMessage.mock.calls.map(([message]) => message.action)).not.toContain(
+			'create_tab_group'
+		)
+	})
+})
 
 describe('TabsController.waitUntilTabLoaded', () => {
 	interface TabRow {

@@ -24,24 +24,30 @@ export function HistoryDetail({
 	if (!session) {
 		return (
 			<div className="flex items-center justify-center h-screen text-xs text-muted-foreground">
-				Loading...
+				Cargando…
 			</div>
 		)
 	}
 
 	return (
-		<div className="flex flex-col h-screen bg-background">
+		<div className="podoo-panel flex flex-col h-screen bg-background text-foreground">
 			{/* Header */}
 			<header className="flex items-center gap-2 border-b px-3 py-2">
-				<Button variant="ghost" size="icon-sm" onClick={onBack} className="cursor-pointer">
+				<Button
+					variant="ghost"
+					size="icon-sm"
+					onClick={onBack}
+					className="cursor-pointer"
+					aria-label="Volver al registro"
+				>
 					<ArrowLeft className="size-3.5" />
 				</Button>
-				<span className="text-sm font-medium truncate">History</span>
+				<span className="text-sm font-medium truncate">Registro de tareas</span>
 			</header>
 
 			{/* Task */}
 			<div className="border-b px-3 py-2 bg-muted/30">
-				<div className="text-[10px] text-muted-foreground uppercase tracking-wide">Task</div>
+				<div className="text-[10px] text-muted-foreground uppercase tracking-wide">Tarea</div>
 				<div className="text-xs font-medium" title={session.task}>
 					{session.task}
 				</div>
@@ -52,7 +58,7 @@ export function HistoryDetail({
 						className="flex items-center gap-1 text-[10px] text-muted-foreground hover:text-foreground transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
 					>
 						<RotateCcw className="size-3" />
-						Run again
+						Repetir tarea
 					</button>
 					<button
 						type="button"
@@ -63,7 +69,7 @@ export function HistoryDetail({
 						className="flex items-center gap-1 text-[10px] text-muted-foreground hover:text-destructive transition-colors cursor-pointer"
 					>
 						<Trash2 className="size-3" />
-						Delete
+						Borrar
 					</button>
 				</div>
 			</div>

@@ -20,6 +20,8 @@ import { getPageInfo } from './dom/getPageInfo'
 import { patchReact } from './patches/react'
 import { isAnchorElement } from './utils'
 
+export { clickElement as clickDomElement, inputTextElement as inputDomText } from './actions'
+
 /**
  * Configuration for PageController
  */
@@ -236,6 +238,14 @@ export class PageController extends EventTarget {
 		if (!this.isIndexed) {
 			throw new Error('DOM tree not indexed yet. Can not perform actions on elements.')
 		}
+	}
+
+	/** Resolve a control from the most recent indexed screen without acting on it. */
+	getIndexedElement(index: number): HTMLElement {
+		this.assertIndexed()
+		const element = getElementByIndex(this.selectorMap, index)
+		if (!element.isConnected) throw new Error(`Element at index ${index} is no longer on screen`)
+		return element
 	}
 
 	/**

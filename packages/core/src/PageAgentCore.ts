@@ -3,7 +3,7 @@
  * Copyright (C) 2026 SimonLuvRamen
  * All rights reserved.
  */
-import { InvokeError, LLM, type Tool } from '@page-agent/llms'
+import { InvokeError, LLM, type Message, type Tool } from '@page-agent/llms'
 import type { BrowserState, PageController } from '@page-agent/page-controller'
 import chalk from 'chalk'
 import * as z from 'zod/v4'
@@ -90,6 +90,7 @@ export class PageAgentCore extends EventTarget {
 	 */
 	#abortController = new AbortController()
 	#observations: string[] = []
+	#conversationMessages: Pick<Message, 'role' | 'content'>[] = []
 
 	/** Resolves when the current run has fully settled. Awaited by `stop()`. */
 	#running: Promise<void> = Promise.resolve()
@@ -193,6 +194,11 @@ export class PageAgentCore extends EventTarget {
 		this.#observations.push(content)
 	}
 
+	/** Add prior conversation turns to the next LLM call for this task. */
+	setConversationMessages(messages: { role: 'user' | 'assistant'; content: string }[]): void {
+		this.#conversationMessages = messages.map((message) => ({ ...message }))
+	}
+
 	/**
 	 * Stop the current task and wait until the run has fully settled (including lifecycle hooks).
 	 * @note never await .stop() in a lifecycle hook.
@@ -218,6 +224,7 @@ export class PageAgentCore extends EventTarget {
 
 		this.history = []
 		this.#observations = []
+		this.#conversationMessages = []
 		this.#states = { totalWaitTime: 0, lastURL: '', browserState: null }
 		this.#abortController = new AbortController()
 		const signal = this.#abortController.signal
@@ -270,8 +277,9 @@ export class PageAgentCore extends EventTarget {
 
 					// assemble prompts
 
-					const messages = [
+					const messages: Message[] = [
 						{ role: 'system' as const, content: this.#getSystemPrompt() },
+						...this.#conversationMessages,
 						{ role: 'user' as const, content: await this.#assembleUserPrompt() },
 					]
 
@@ -477,7 +485,12 @@ export class PageAgentCore extends EventTarget {
 			return this.config.customSystemPrompt
 		}
 
-		const targetLanguage = this.config.language === 'zh-CN' ? '中文' : 'English'
+		const targetLanguage =
+			this.config.language === 'zh-CN'
+				? '中文'
+				: this.config.language === 'es-ES'
+					? 'Español'
+					: 'English'
 		const systemPrompt = SYSTEM_PROMPT.replace(
 			/Default working language: \*\*.*?\*\*/,
 			`Default working language: **${targetLanguage}**`

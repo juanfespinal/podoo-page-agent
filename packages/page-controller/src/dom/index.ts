@@ -23,6 +23,8 @@ export function resolveViewportExpansion(viewportExpansion?: number): number {
 
 export interface DomConfig {
 	viewportExpansion?: number
+	/** Keep index mapping for the agent while hiding Page Agent's numeric overlays. */
+	showIndexOverlays?: boolean
 	interactiveBlacklist?: (Element | (() => Element))[]
 	interactiveWhitelist?: (Element | (() => Element))[]
 	includeAttributes?: string[]
@@ -76,7 +78,7 @@ export function getFlatTree(config: DomConfig): FlatDomTree {
 	}
 
 	const elements = domTree({
-		doHighlightElements: true,
+		doHighlightElements: config.showIndexOverlays ?? true,
 		debugMode: true,
 		focusHighlightIndex: -1,
 		viewportExpansion,

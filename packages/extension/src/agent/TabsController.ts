@@ -50,7 +50,11 @@ export class TabsController {
 	private task: string = ''
 
 	async init(task: string, options: TabsInitOptions = {}) {
-		const { includeInitialTab = true, experimentalIncludeAllTabs = false } = options
+		const {
+			includeInitialTab = true,
+			experimentalIncludeAllTabs = false,
+			groupInitialTab = true,
+		} = options
 		debug('init', task, options)
 
 		if (this.disposed) {
@@ -102,7 +106,7 @@ export class TabsController {
 			}
 			if (this.tabs.find((t) => t.id === this.initialTabId)) {
 				this.currentTabId = this.initialTabId
-				await this.createTabGroup([this.initialTabId])
+				if (groupInitialTab) await this.createTabGroup([this.initialTabId])
 			}
 		} else if (includeInitialTab) {
 			const info = await sendMessage({
@@ -122,7 +126,7 @@ export class TabsController {
 					status: info.status,
 				})
 
-				await this.createTabGroup([this.initialTabId])
+				if (groupInitialTab) await this.createTabGroup([this.initialTabId])
 			}
 		}
 
@@ -232,7 +236,7 @@ export class TabsController {
 			payload: {
 				groupId: this.tabGroupId,
 				properties: {
-					title: `PageAgent(${this.task})`,
+					title: `Podoo · ${this.task.slice(0, 40)}`,
 					color: randomColor(),
 					collapsed: false,
 				},
@@ -397,6 +401,7 @@ export class TabsController {
 export interface TabsInitOptions {
 	includeInitialTab?: boolean
 	experimentalIncludeAllTabs?: boolean
+	groupInitialTab?: boolean
 }
 
 export type TabAction =

@@ -1,5 +1,7 @@
 # Page Agent
 
+> **Podoo fork:** The Chrome extension includes an Odoo adoption copilot. See the [Podoo Copilot guide](./docs/podoo-copilot.md) for setup, behavior, and current limits. The library and the rest of this README retain the upstream Page Agent documentation.
+
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="https://page-agent.github.io/assets/readme/banner-dark.png">
   <img alt="Page Agent Banner" src="https://page-agent.github.io/assets/readme/banner-light.png">

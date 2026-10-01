@@ -1,24 +1,10 @@
-import {
-	Copy,
-	CornerUpLeft,
-	ExternalLink,
-	Eye,
-	EyeOff,
-	FoldVertical,
-	HatGlasses,
-	Home,
-	Loader2,
-	Scale,
-	UnfoldVertical,
-} from 'lucide-react'
-import { useEffect, useState } from 'react'
-import { siGithub } from 'simple-icons'
+import { ArrowLeft, ChevronDown, Eye, EyeOff, LoaderCircle, ShieldCheck } from 'lucide-react'
+import { useState } from 'react'
 
 import { DEMO_BASE_URL, DEMO_MODEL, isTestingEndpoint } from '@/agent/constants'
 import type { ExtConfig, LanguagePreference } from '@/agent/useAgent'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { Switch } from '@/components/ui/switch'
 
 interface ConfigPanelProps {
 	config: ExtConfig | null
@@ -29,374 +15,211 @@ interface ConfigPanelProps {
 export function ConfigPanel({ config, onSave, onClose }: ConfigPanelProps) {
 	const [baseURL, setBaseURL] = useState(config?.baseURL || DEMO_BASE_URL)
 	const [model, setModel] = useState(config?.model || DEMO_MODEL)
-	const [apiKey, setApiKey] = useState(config?.apiKey)
+	const [apiKey, setApiKey] = useState(config?.apiKey ?? '')
 	const [language, setLanguage] = useState<LanguagePreference>(config?.language)
 	const [maxSteps, setMaxSteps] = useState(config?.maxSteps)
 	const [systemInstruction, setSystemInstruction] = useState(config?.systemInstruction ?? '')
-	const [experimentalLlmsTxt, setExperimentalLlmsTxt] = useState(
-		config?.experimentalLlmsTxt ?? false
-	)
-	const [experimentalIncludeAllTabs, setExperimentalIncludeAllTabs] = useState(
-		config?.experimentalIncludeAllTabs ?? false
-	)
 	const [disableNamedToolChoice, setDisableNamedToolChoice] = useState(
 		config?.disableNamedToolChoice ?? false
 	)
 	const [advancedOpen, setAdvancedOpen] = useState(false)
 	const [saving, setSaving] = useState(false)
-	const [userAuthToken, setUserAuthToken] = useState('')
-	const [copied, setCopied] = useState(false)
-	const [showToken, setShowToken] = useState(false)
 	const [showApiKey, setShowApiKey] = useState(false)
-
-	const [prevConfig, setPrevConfig] = useState(config)
-	if (prevConfig !== config) {
-		setPrevConfig(config)
-		setBaseURL(config?.baseURL || DEMO_BASE_URL)
-		setModel(config?.model || DEMO_MODEL)
-		setApiKey(config?.apiKey)
-		setLanguage(config?.language)
-		setMaxSteps(config?.maxSteps)
-		setSystemInstruction(config?.systemInstruction ?? '')
-		setExperimentalLlmsTxt(config?.experimentalLlmsTxt ?? false)
-		setExperimentalIncludeAllTabs(config?.experimentalIncludeAllTabs ?? false)
-		setDisableNamedToolChoice(config?.disableNamedToolChoice ?? false)
-	}
-
-	// Poll for user auth token every second until found
-	useEffect(() => {
-		let interval: NodeJS.Timeout | null = null
-
-		const fetchToken = async () => {
-			const result = await chrome.storage.local.get('PageAgentExtUserAuthToken')
-			const token = result.PageAgentExtUserAuthToken
-			if (typeof token === 'string' && token) {
-				setUserAuthToken(token)
-				if (interval) {
-					clearInterval(interval)
-					interval = null
-				}
-			}
-		}
-
-		fetchToken()
-		interval = setInterval(fetchToken, 1000)
-
-		return () => {
-			if (interval) clearInterval(interval)
-		}
-	}, [])
-
-	const handleCopyToken = async () => {
-		if (userAuthToken) {
-			await navigator.clipboard.writeText(userAuthToken)
-			setCopied(true)
-			setTimeout(() => setCopied(false), 2000)
-		}
-	}
+	const [saveError, setSaveError] = useState<string | null>(null)
 
 	const handleSave = async () => {
 		setSaving(true)
+		setSaveError(null)
 		try {
 			await onSave({
 				apiKey,
-				baseURL,
-				model,
+				baseURL: baseURL.trim(),
+				model: model.trim(),
 				language,
 				maxSteps: maxSteps || undefined,
 				systemInstruction: systemInstruction || undefined,
-				experimentalLlmsTxt,
-				experimentalIncludeAllTabs,
 				disableNamedToolChoice,
+				odooMode: config?.odooMode ?? 'explain',
 			})
+		} catch (error) {
+			setSaveError(error instanceof Error ? error.message : 'No se pudo guardar la configuración.')
 		} finally {
 			setSaving(false)
 		}
 	}
 
 	return (
-		<div className="flex flex-col gap-4 p-4 relative">
-			<div className="flex items-center justify-between">
-				<h2 className="text-base font-semibold">Settings</h2>
+		<div className="podoo-panel flex h-screen flex-col overflow-y-auto bg-background text-foreground">
+			<header className="flex items-center gap-3 border-b bg-card px-4 py-4">
 				<Button
 					variant="ghost"
-					size="icon-sm"
+					size="icon"
+					className="size-10 cursor-pointer"
 					onClick={onClose}
-					className="absolute top-2 right-3 cursor-pointer"
-					aria-label="Back"
+					aria-label="Volver al chat"
 				>
-					<CornerUpLeft className="size-3.5" />
+					<ArrowLeft className="size-4" />
 				</Button>
-			</div>
-
-			{/* User Auth Token Section */}
-			<div className="flex flex-col gap-1.5 p-3 bg-muted/50 rounded-md border">
-				<label htmlFor="user-auth-token" className="text-xs font-medium text-muted-foreground">
-					User Auth Token
-				</label>
-				<p className="text-[10px] text-muted-foreground mb-1">
-					Give a website the ability to call this extension.
-				</p>
-				<div className="flex gap-2 items-center">
+				<div>
+					<h1 className="text-base font-semibold">Configuración</h1>
+					<p className="text-xs text-muted-foreground">Conecta el modelo que usará Podoo</p>
+				</div>
+			</header>
+			<main className="flex-1 space-y-5 p-4">
+				<div className="rounded-xl border bg-card p-3 text-xs leading-relaxed text-muted-foreground">
+					<ShieldCheck className="mr-1 inline size-4 align-text-bottom text-primary" /> Tu clave se
+					guarda en este navegador. Podoo enviará el contenido de la pantalla al proveedor que
+					configures.
+				</div>
+				<div className="space-y-2">
+					<label htmlFor="base-url" className="block text-sm font-medium">
+						URL de la API
+					</label>
 					<Input
-						id="user-auth-token"
-						readOnly
-						value={
-							userAuthToken
-								? showToken
-									? userAuthToken
-									: `${userAuthToken.slice(0, 4)}${'•'.repeat(userAuthToken.length - 8)}${userAuthToken.slice(-4)}`
-								: 'Loading...'
-						}
-						className="text-xs h-8 font-mono bg-background"
+						id="base-url"
+						placeholder="https://api.openai.com/v1"
+						value={baseURL}
+						onChange={(event) => setBaseURL(event.target.value)}
+						className="h-11 text-sm"
 					/>
-					<Button
-						variant="outline"
-						size="icon"
-						className="h-8 w-8 shrink-0 cursor-pointer"
-						onClick={() => setShowToken(!showToken)}
-						disabled={!userAuthToken}
-						aria-label={showToken ? 'Hide token' : 'Show token'}
-						aria-pressed={showToken}
-					>
-						{showToken ? <EyeOff className="size-3" /> : <Eye className="size-3" />}
-					</Button>
-					<Button
-						variant="outline"
-						size="icon"
-						className="h-8 w-8 shrink-0 cursor-pointer"
-						onClick={handleCopyToken}
-						disabled={!userAuthToken}
-						aria-label="Copy token"
-					>
-						{copied ? <span className="">✓</span> : <Copy className="size-3" />}
-					</Button>
-					<span role="status" aria-live="polite" aria-atomic="true" className="sr-only">
-						{copied ? 'Token copied' : ''}
-					</span>
+					<p className="text-xs text-muted-foreground">
+						Usa la URL base del proveedor de tu modelo.
+					</p>
 				</div>
-			</div>
-
-			{/* Hub link */}
-			<a
-				href="/hub.html"
-				target="_blank"
-				rel="noopener noreferrer"
-				className="flex items-center justify-between p-3 rounded-md border bg-muted/50 text-xs font-medium text-muted-foreground hover:text-foreground hover:border-foreground/20 transition-colors"
-			>
-				Manage Page Agent Hub
-				<ExternalLink className="size-3" />
-			</a>
-
-			<div className="flex flex-col gap-1.5">
-				<label htmlFor="base-url" className="text-xs text-muted-foreground">
-					Base URL
-				</label>
-				<Input
-					id="base-url"
-					placeholder="https://api.openai.com/v1"
-					value={baseURL}
-					onChange={(e) => setBaseURL(e.target.value)}
-					className="text-xs h-8"
-				/>
-			</div>
-
-			{/* Testing API notice */}
-			{isTestingEndpoint(baseURL) && (
-				<div className="p-2.5 rounded-md border border-amber-500/30 bg-amber-500/5 text-[11px] text-muted-foreground leading-relaxed">
-					<Scale className="size-3 inline-block mr-1 -mt-0.5 text-amber-600" />
-					You are using our testing API. By using this you agree to the{' '}
-					<a
-						href="https://github.com/alibaba/page-agent/blob/main/docs/terms-and-privacy.md"
-						target="_blank"
-						rel="noopener noreferrer"
-						className="underline hover:text-foreground"
+				{isTestingEndpoint(baseURL) && (
+					<p
+						role="alert"
+						className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-xs"
 					>
-						Terms of Use & Privacy Policy
-					</a>
-				</div>
-			)}
-
-			<div className="flex flex-col gap-1.5">
-				<label htmlFor="model" className="text-xs text-muted-foreground">
-					Model
-				</label>
-				<Input
-					id="model"
-					placeholder="gpt-5.1"
-					value={model}
-					onChange={(e) => setModel(e.target.value)}
-					className="text-xs h-8"
-				/>
-			</div>
-
-			<div className="flex flex-col gap-1.5">
-				<label htmlFor="api-key" className="text-xs text-muted-foreground">
-					API Key
-				</label>
-				<div className="flex gap-2 items-center">
+						Configura tu propio proveedor antes de enviar datos de Odoo. El endpoint de prueba no
+						está habilitado para este uso.
+					</p>
+				)}
+				<div className="space-y-2">
+					<label htmlFor="model" className="block text-sm font-medium">
+						Modelo
+					</label>
 					<Input
-						id="api-key"
-						type={showApiKey ? 'text' : 'password'}
-						// placeholder="sk-..."
-						value={apiKey}
-						onChange={(e) => setApiKey(e.target.value)}
-						className="text-xs h-8"
+						id="model"
+						placeholder="gpt-6-luna"
+						value={model}
+						onChange={(event) => setModel(event.target.value)}
+						className="h-11 text-sm"
 					/>
-					<Button
-						variant="outline"
-						size="icon"
-						className="h-8 w-8 shrink-0 cursor-pointer"
-						onClick={() => setShowApiKey(!showApiKey)}
-						aria-label={showApiKey ? 'Hide API key' : 'Show API key'}
-					>
-						{showApiKey ? <EyeOff className="size-3" /> : <Eye className="size-3" />}
-					</Button>
 				</div>
-			</div>
-
-			<div className="flex flex-col gap-1.5">
-				<label className="text-xs text-muted-foreground">Response Language</label>
-				<select
-					value={language ?? ''}
-					onChange={(e) => setLanguage((e.target.value || undefined) as LanguagePreference)}
-					className="h-8 text-xs rounded-md border border-input bg-background px-2 cursor-pointer"
-				>
-					<option value="">System</option>
-					<option value="en-US">English</option>
-					<option value="zh-CN">中文</option>
-				</select>
-			</div>
-
-			{/* Advanced Config */}
-			<button
-				type="button"
-				onClick={() => setAdvancedOpen(!advancedOpen)}
-				className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground cursor-pointer mt-1 font-bold"
-			>
-				Advanced
-				{advancedOpen ? <FoldVertical className="size-3" /> : <UnfoldVertical className="size-3" />}
-			</button>
-
-			{advancedOpen && (
-				<>
-					<div className="flex flex-col gap-1.5">
-						<label htmlFor="max-steps" className="text-xs text-muted-foreground">
-							Max Steps
-						</label>
+				<div className="space-y-2">
+					<label htmlFor="api-key" className="block text-sm font-medium">
+						Clave de API
+					</label>
+					<div className="flex gap-2">
 						<Input
-							id="max-steps"
-							type="number"
-							placeholder="40"
-							min={1}
-							max={200}
-							value={maxSteps ?? ''}
-							onChange={(e) => setMaxSteps(e.target.value ? Number(e.target.value) : undefined)}
-							className="text-xs h-8 [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none [-moz-appearance:textfield]"
+							id="api-key"
+							type={showApiKey ? 'text' : 'password'}
+							value={apiKey}
+							onChange={(event) => setApiKey(event.target.value)}
+							className="h-11 text-sm"
+							autoComplete="off"
 						/>
+						<Button
+							type="button"
+							variant="outline"
+							size="icon"
+							className="size-11 shrink-0 cursor-pointer"
+							onClick={() => setShowApiKey((visible) => !visible)}
+							aria-label={showApiKey ? 'Ocultar clave' : 'Mostrar clave'}
+						>
+							{showApiKey ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
+						</Button>
 					</div>
-
-					<div className="flex flex-col gap-1.5">
-						<label className="text-xs text-muted-foreground">System Instruction</label>
-						<textarea
-							placeholder="Additional instructions for the agent..."
-							value={systemInstruction}
-							onChange={(e) => setSystemInstruction(e.target.value)}
-							rows={3}
-							className="text-xs rounded-md border border-input bg-background px-3 py-2 resize-y min-h-[60px]"
+				</div>
+				<div className="space-y-2">
+					<label htmlFor="language" className="block text-sm font-medium">
+						Idioma de respuesta
+					</label>
+					<select
+						id="language"
+						value={language ?? ''}
+						onChange={(event) =>
+							setLanguage((event.target.value || undefined) as LanguagePreference)
+						}
+						className="h-11 w-full rounded-md border border-input bg-background px-3 text-sm focus-visible:outline-2 focus-visible:outline-ring"
+					>
+						<option value="">Seguir el idioma de la conversación</option>
+						<option value="es-ES">Español</option>
+						<option value="en-US">English</option>
+						<option value="zh-CN">中文</option>
+					</select>
+				</div>
+				<div className="rounded-xl border bg-card">
+					<button
+						type="button"
+						onClick={() => setAdvancedOpen((open) => !open)}
+						aria-expanded={advancedOpen}
+						className="flex min-h-12 w-full items-center justify-between px-4 text-left text-sm font-medium cursor-pointer focus-visible:outline-2 focus-visible:outline-ring"
+					>
+						Opciones avanzadas{' '}
+						<ChevronDown
+							className={`size-4 transition-transform ${advancedOpen ? 'rotate-180' : ''}`}
 						/>
-					</div>
-
-					<label className="flex items-center justify-between cursor-pointer">
-						<span className="text-xs text-muted-foreground">Disable named tool_choice</span>
-						<Switch checked={disableNamedToolChoice} onCheckedChange={setDisableNamedToolChoice} />
-					</label>
-
-					<label className="flex items-center justify-between cursor-pointer">
-						<span className="text-xs text-muted-foreground">Experimental llms.txt support</span>
-						<Switch checked={experimentalLlmsTxt} onCheckedChange={setExperimentalLlmsTxt} />
-					</label>
-
-					<label className="flex items-center justify-between cursor-pointer">
-						<span className="text-xs text-muted-foreground">Experimental include all tabs</span>
-						<Switch
-							checked={experimentalIncludeAllTabs}
-							onCheckedChange={setExperimentalIncludeAllTabs}
-						/>
-					</label>
-				</>
-			)}
-
-			<div className="flex gap-2 mt-2">
-				<Button variant="outline" onClick={onClose} className="flex-1 h-8 text-xs cursor-pointer">
-					Cancel
-				</Button>
+					</button>
+					{advancedOpen && (
+						<div className="space-y-4 border-t p-4">
+							<div className="space-y-2">
+								<label htmlFor="max-steps" className="block text-sm font-medium">
+									Máximo de pasos por tarea
+								</label>
+								<Input
+									id="max-steps"
+									type="number"
+									min={1}
+									max={200}
+									value={maxSteps ?? ''}
+									onChange={(event) =>
+										setMaxSteps(event.target.value ? Number(event.target.value) : undefined)
+									}
+									className="h-11 text-sm"
+								/>
+							</div>
+							<div className="space-y-2">
+								<label htmlFor="system-instruction" className="block text-sm font-medium">
+									Instrucciones adicionales
+								</label>
+								<textarea
+									id="system-instruction"
+									value={systemInstruction}
+									onChange={(event) => setSystemInstruction(event.target.value)}
+									rows={3}
+									className="w-full rounded-md border bg-background p-3 text-sm focus-visible:outline-2 focus-visible:outline-ring"
+									placeholder="Ej.: Responde con ejemplos del equipo comercial."
+								/>
+							</div>
+							<label className="flex items-center gap-3 text-sm">
+								<input
+									type="checkbox"
+									checked={disableNamedToolChoice}
+									onChange={(event) => setDisableNamedToolChoice(event.target.checked)}
+									className="size-4 accent-primary"
+								/>{' '}
+								Desactivar selección de herramienta por nombre
+							</label>
+						</div>
+					)}
+				</div>
+				{saveError && (
+					<p role="alert" className="text-sm text-destructive">
+						{saveError}
+					</p>
+				)}
+			</main>
+			<footer className="border-t bg-card p-4">
 				<Button
-					onClick={handleSave}
-					disabled={saving}
-					className="flex-1 h-8 text-xs cursor-pointer"
+					onClick={() => void handleSave()}
+					disabled={saving || !baseURL.trim() || !model.trim()}
+					className="min-h-11 w-full cursor-pointer"
 				>
-					{saving ? <Loader2 className="size-3 animate-spin" /> : 'Save'}
+					{saving ? <LoaderCircle className="size-4 animate-spin" /> : 'Guardar configuración'}
 				</Button>
-			</div>
-
-			{/* Footer */}
-			<div className="mt-4 mb-4 pt-4 border-t border-border/50 flex gap-2 justify-between text-[10px] text-muted-foreground">
-				<div className="flex flex-col justify-between">
-					<span>
-						Version <span className="font-mono">v{__VERSION__}</span>
-					</span>
-
-					<a
-						href="https://github.com/alibaba/page-agent"
-						target="_blank"
-						rel="noopener noreferrer"
-						className="flex items-center gap-1 hover:text-foreground"
-					>
-						<svg role="img" viewBox="0 0 24 24" className="size-3 fill-current">
-							<path d={siGithub.path} />
-						</svg>
-						<span>Source Code</span>
-					</a>
-				</div>
-
-				<div className="flex flex-col items-end">
-					<a
-						href="https://alibaba.github.io/page-agent/"
-						target="_blank"
-						rel="noopener noreferrer"
-						className="flex items-center gap-1 hover:text-foreground"
-					>
-						<Home className="size-3" />
-						<span>Home Page</span>
-					</a>
-
-					<a
-						href="https://github.com/alibaba/page-agent/blob/main/docs/terms-and-privacy.md"
-						target="_blank"
-						rel="noopener noreferrer"
-						className="flex items-center gap-1 hover:text-foreground"
-					>
-						<HatGlasses className="size-3" />
-						<span>Privacy</span>
-					</a>
-				</div>
-			</div>
-
-			{/* attribute */}
-			<div className="text-[10px] text-muted-foreground bg-background fixed bottom-0 w-full flex justify-around">
-				<span className="leading-loose">
-					Built with ♥️ by{' '}
-					<a
-						href="https://github.com/gaomeng1900"
-						target="_blank"
-						rel="noopener noreferrer"
-						className="underline hover:text-foreground"
-					>
-						@Simon
-					</a>
-				</span>
-			</div>
+			</footer>
 		</div>
 	)
 }

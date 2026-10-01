@@ -1,0 +1,164 @@
+.podoo-panel {
+	--background: #f7f9f8;
+	--foreground: #1b2d2b;
+	--card: #ffffff;
+	--card-foreground: #1b2d2b;
+	--primary: #225c56;
+	--primary-foreground: #ffffff;
+	--muted: #eef4f1;
+	--muted-foreground: #526963;
+	--accent: #e5f1ec;
+	--accent-foreground: #17483f;
+	--border: #d9e5df;
+	--input: #cbdcd4;
+	--ring: #398776;
+	--destructive: #a92335;
+	font-family:
+		Inter,
+		ui-sans-serif,
+		system-ui,
+		-apple-system,
+		BlinkMacSystemFont,
+		'Segoe UI',
+		sans-serif;
+}
+
+.dark .podoo-panel {
+	--background: #14211f;
+	--foreground: #edf6f1;
+	--card: #1a2b27;
+	--card-foreground: #edf6f1;
+	--primary: #8bd9bd;
+	--primary-foreground: #11251e;
+	--muted: #233731;
+	--muted-foreground: #b0c9be;
+	--accent: #28473d;
+	--accent-foreground: #e5f7eb;
+	--border: #345048;
+	--input: #3d5d52;
+	--ring: #8bd9bd;
+	--destructive: #ff8a97;
+}
+
+.podoo-mode {
+	cursor: pointer;
+	color: var(--foreground);
+}
+
+.podoo-mode-active {
+	border-color: var(--primary);
+	background: var(--accent);
+	color: var(--accent-foreground);
+	box-shadow: inset 0 0 0 1px var(--primary);
+}
+
+.podoo-transcript {
+	scrollbar-gutter: stable;
+}
+
+.podoo-user-bubble {
+	background: var(--primary);
+	color: var(--primary-foreground);
+	overflow-wrap: anywhere;
+}
+
+.podoo-assistant-bubble {
+	box-shadow: 0 3px 12px rgb(26 64 52 / 5%);
+	overflow-wrap: anywhere;
+}
+
+.podoo-markdown > :first-child {
+	margin-top: 0;
+}
+.podoo-markdown > :last-child {
+	margin-bottom: 0;
+}
+.podoo-markdown p {
+	margin: 0.65em 0;
+}
+.podoo-markdown h1,
+.podoo-markdown h2,
+.podoo-markdown h3 {
+	margin: 0.9em 0 0.35em;
+	font-weight: 700;
+	line-height: 1.3;
+}
+.podoo-markdown h1 {
+	font-size: 1.12em;
+}
+.podoo-markdown h2 {
+	font-size: 1.06em;
+}
+.podoo-markdown ul,
+.podoo-markdown ol {
+	margin: 0.6em 0;
+	padding-left: 1.4em;
+}
+.podoo-markdown ul {
+	list-style: disc;
+}
+.podoo-markdown ol {
+	list-style: decimal;
+}
+.podoo-markdown li {
+	margin: 0.28em 0;
+}
+.podoo-markdown li > p {
+	margin: 0;
+}
+.podoo-markdown a {
+	color: var(--primary);
+	text-decoration: underline;
+	text-underline-offset: 2px;
+}
+.podoo-markdown blockquote {
+	margin: 0.7em 0;
+	padding-left: 0.9em;
+	border-left: 2px solid var(--primary);
+	color: var(--muted-foreground);
+}
+.podoo-markdown code {
+	border-radius: 0.3em;
+	background: var(--muted);
+	padding: 0.1em 0.3em;
+	font-size: 0.9em;
+}
+.podoo-markdown pre {
+	margin: 0.7em 0;
+	overflow-x: auto;
+	border-radius: 0.6em;
+	background: var(--muted);
+	padding: 0.8em;
+}
+.podoo-markdown pre code {
+	background: transparent;
+	padding: 0;
+}
+.podoo-markdown table {
+	display: block;
+	max-width: 100%;
+	overflow-x: auto;
+	border-collapse: collapse;
+}
+.podoo-markdown th,
+.podoo-markdown td {
+	border: 1px solid var(--border);
+	padding: 0.35em 0.5em;
+	text-align: left;
+}
+.podoo-markdown strong {
+	font-weight: 700;
+}
+
+.podoo-transcript details[open] summary svg {
+	transform: rotate(180deg);
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.podoo-panel *,
+	.podoo-panel *::before,
+	.podoo-panel *::after {
+		animation-duration: 0.01ms !important;
+		transition-duration: 0.01ms !important;
+	}
+}
