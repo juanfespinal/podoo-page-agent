@@ -20,6 +20,8 @@ import { getPageInfo } from './dom/getPageInfo'
 import { patchReact } from './patches/react'
 import { isAnchorElement } from './utils'
 
+export { clickElement as clickDomElement, inputTextElement as inputDomText } from './actions'
+
 /**
  * Configuration for PageController
  */

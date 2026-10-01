@@ -30,7 +30,7 @@ export async function activeOdooTabId(origin: string, path?: string): Promise<nu
 
 export async function guideMessage(
 	tabId: number,
-	action: 'guide_inspect' | 'guide_highlight' | 'guide_clear',
+	action: 'guide_inspect' | 'guide_highlight' | 'guide_clear' | 'guide_act',
 	payload?: unknown[]
 ): Promise<Record<string, unknown>> {
 	try {

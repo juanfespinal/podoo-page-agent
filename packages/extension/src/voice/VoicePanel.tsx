@@ -93,6 +93,7 @@ export function VoicePanel({ context, onClose }: VoicePanelProps) {
 	const responseEpochRef = useRef(0)
 	const decisionPendingRef = useRef(false)
 	const guideRetriesRef = useRef(0)
+	const autoActionsRef = useRef(0)
 	const contextRef = useRef(context)
 	contextRef.current = context
 
@@ -125,6 +126,7 @@ export function VoicePanel({ context, onClose }: VoicePanelProps) {
 		responseEpochRef.current = guideEpochRef.current
 		decisionPendingRef.current = false
 		guideRetriesRef.current = 0
+		autoActionsRef.current = 0
 		if (audioRef.current) audioRef.current.srcObject = null
 		if (guideTabRef.current !== null) void guideMessage(guideTabRef.current, 'guide_clear')
 		guideTabRef.current = null
@@ -156,10 +158,24 @@ export function VoicePanel({ context, onClose }: VoicePanelProps) {
 		respondingRef.current = true
 		setStatus('responding')
 		try {
-			const { tabId, screen } = await inspectOdooScreen(
+			let { tabId, screen } = await inspectOdooScreen(
 				contextRef.current.origin,
 				contextRef.current.path
 			)
+			for (
+				let retry = 0;
+				(screen.code === 'STALE_SNAPSHOT' || screen.code === CONTENT_SCRIPT_MISSING) && retry < 4;
+				retry++
+			) {
+				if (epoch !== guideEpochRef.current || userSpeakingRef.current) break
+				await new Promise((resolve) => window.setTimeout(resolve, 350 + retry * 200))
+				const refreshed = await inspectOdooScreen(
+					contextRef.current.origin,
+					contextRef.current.path
+				)
+				tabId = refreshed.tabId
+				screen = refreshed.screen
+			}
 			if (tabId !== null) guideTabRef.current = tabId
 			if (epoch !== guideEpochRef.current || userSpeakingRef.current) {
 				respondingRef.current = false
@@ -243,6 +259,46 @@ export function VoicePanel({ context, onClose }: VoicePanelProps) {
 			}
 			return result
 		}
+		if (args.mode === 'click' || args.mode === 'input') {
+			const tabId = guideTabRef.current
+			if (tabId === null) return { success: false, error: 'Open the Odoo tab.' }
+			if (autoActionsRef.current >= 20)
+				return {
+					success: true,
+					speech: 'He completado varios pasos. Dime si quieres que continúe.',
+				}
+			const result = await guideMessage(tabId, 'guide_act', [
+				{
+					snapshotId: args.snapshot_id,
+					index: args.index,
+					action: args.mode,
+					text: args.text,
+				},
+			])
+			if (result.success === true) {
+				autoActionsRef.current++
+				setGuideTarget(null)
+				return result
+			}
+			if (result.code === 'REQUIRES_CONFIRMATION') {
+				const label = typeof args.label === 'string' ? args.label : 'este control'
+				const instruction = `Este paso requiere tu clic final en ${label}.`
+				const highlight = await guideMessage(tabId, 'guide_highlight', [
+					{
+						snapshotId: args.snapshot_id,
+						index: args.index,
+						label,
+						instruction,
+					},
+				])
+				if (highlight.success === true) {
+					setGuideTarget({ key: `${args.snapshot_id}:${args.index}`, label, instruction })
+					return { success: true, speech: instruction, needsUserClick: true }
+				}
+				return highlight
+			}
+			return result
+		}
 		return { success: false, error: 'Invalid response mode.' }
 	}, [])
 
@@ -287,6 +343,9 @@ export function VoicePanel({ context, onClose }: VoicePanelProps) {
 				toolProcessingRef.current = true
 				const epoch = guideEpochRef.current
 				let speech: string | null = null
+				let acted = false
+				let stale = false
+				let missingContent = false
 				for (const [position, call] of calls.entries()) {
 					let result: Record<string, unknown>
 					if (
@@ -322,6 +381,10 @@ export function VoicePanel({ context, onClose }: VoicePanelProps) {
 						}
 					}
 					if (result.success === true && typeof result.speech === 'string') speech = result.speech
+					if (result.success === true && result.acted === true) acted = true
+					if (result.code === 'STALE_SNAPSHOT' || result.code === CONTENT_SCRIPT_MISSING)
+						stale = true
+					if (result.code === CONTENT_SCRIPT_MISSING) missingContent = true
 					send({
 						type: 'conversation.item.create',
 						item: {
@@ -339,18 +402,24 @@ export function VoicePanel({ context, onClose }: VoicePanelProps) {
 					!interruptedResponseIdsRef.current.has(event.response?.id ?? '') &&
 					channelRef.current?.readyState === 'open'
 				) {
-					if (speech) {
+					if (acted) {
+						guideRetriesRef.current = 0
+						pendingProgressRef.current = true
+						scheduleProgress(450)
+					} else if (speech) {
 						guideRetriesRef.current = 0
 						respondingRef.current = true
 						responseEpochRef.current = epoch
 						send(speakRealtimeGuidance(speech))
-					} else if (wasDecision && guideRetriesRef.current < 2) {
+					} else if (wasDecision && guideRetriesRef.current < (stale ? 5 : 2)) {
 						guideRetriesRef.current++
 						pendingProgressRef.current = true
-						scheduleProgress(100)
+						scheduleProgress(stale ? 400 + guideRetriesRef.current * 200 : 250)
 					} else {
 						setError(
-							'No pude ubicar el siguiente control en esta pantalla. Puedes intentarlo de nuevo.'
+							missingContent
+								? RELOAD_ODOO_TAB_MESSAGE
+								: 'No pude ubicar el siguiente control en esta pantalla. Puedes intentarlo de nuevo.'
 						)
 						setStatus('listening')
 					}
@@ -472,6 +541,7 @@ export function VoicePanel({ context, onClose }: VoicePanelProps) {
 						break
 					case 'input_audio_buffer.committed':
 						guideRetriesRef.current = 0
+						autoActionsRef.current = 0
 						pendingProgressRef.current = true
 						scheduleProgress(0)
 						break
@@ -621,8 +691,8 @@ export function VoicePanel({ context, onClose }: VoicePanelProps) {
 						<Headphones className="size-4 text-primary" /> Voz en vivo · Realtime 2.1 mini
 					</div>
 					<p className="mt-1 text-xs text-muted-foreground">
-						Pregunta lo que quieras sobre Odoo. Para guiarte, Podoo señala el siguiente control en
-						tu pantalla.
+						Pregunta lo que quieras sobre Odoo. Podoo puede señalar controles o hacer clic y
+						escribir cuando se lo pidas.
 					</p>
 				</div>
 				<Button

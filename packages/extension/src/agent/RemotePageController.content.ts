@@ -1,16 +1,19 @@
 /**
  * content script for RemotePageController
  */
-import { PageController } from '@page-agent/page-controller'
+import { PageController, clickDomElement, inputDomText } from '@page-agent/page-controller'
 
 import { readOdooContext } from '@/odoo/context'
 import { GuideOverlay } from '@/voice/guide-overlay'
 import {
+	GuideSelectionError,
 	type GuideSnapshot,
 	assertHighlightSelection,
+	guideTargetKey,
 	indexedControls,
 } from '@/voice/guide-validation'
-import { collectOdooFieldTargets } from '@/voice/odoo-field-targets'
+import { type OdooFieldTarget, collectOdooFieldTargets } from '@/voice/odoo-field-targets'
+import { assertVoiceActionTarget } from '@/voice/voice-action'
 
 export function initPageController() {
 	let pageController: PageController | null = null
@@ -22,7 +25,41 @@ export function initPageController() {
 		showIndexOverlays: false,
 	})
 	let guideSnapshot: GuideSnapshot | null = null
-	let guideExtraTargets = new Map<number, HTMLElement>()
+	let guideExtraTargets = new Map<number, OdooFieldTarget>()
+	let guideTargetKeys = new Map<number, string>()
+	let guideContextKey = ''
+
+	function guideError(error: unknown): { success: false; code?: string; error: string } {
+		return {
+			success: false,
+			...(error instanceof GuideSelectionError
+				? { code: error.code }
+				: error instanceof Error && error.message === 'REQUIRES_CONFIRMATION'
+					? { code: 'REQUIRES_CONFIRMATION' }
+					: error instanceof Error && error.message.includes('no longer on screen')
+						? { code: 'STALE_SNAPSHOT' }
+						: {}),
+			error: error instanceof Error ? error.message : String(error),
+		}
+	}
+
+	function assertCurrentGuideTarget(index: number, element: HTMLElement): void {
+		const context = readOdooContext(document, new URL(window.location.href))
+		if (
+			JSON.stringify(context) !== guideContextKey ||
+			!element.isConnected ||
+			guideTargetKeys.get(index) !== guideTargetKey(element)
+		)
+			throw new GuideSelectionError('Odoo changed this screen. Inspect again.', 'STALE_SNAPSHOT')
+	}
+
+	function resolveGuideTarget(index: number): HTMLElement {
+		try {
+			return guideExtraTargets.get(index)?.element ?? guideController.getIndexedElement(index)
+		} catch {
+			throw new GuideSelectionError('Odoo replaced this control. Inspect again.', 'STALE_SNAPSHOT')
+		}
+	}
 
 	const myTabIdPromise = chrome.runtime
 		.sendMessage({ type: 'PAGE_CONTROL', action: 'get_my_tab_id' })
@@ -92,20 +129,33 @@ export function initPageController() {
 				guideOverlay.clear()
 				guideSnapshot = null
 				guideExtraTargets.clear()
+				guideTargetKeys.clear()
+				guideContextKey = ''
 				sendResponse({ success: true })
 				break
 			case 'guide_inspect': {
 				const startedUrl = window.location.href
 				const context = readOdooContext(document, new URL(startedUrl))
 				if (!context) {
-					sendResponse({ success: false, error: 'The current tab is not an Odoo screen.' })
+					sendResponse({
+						success: false,
+						code: 'STALE_SNAPSHOT',
+						error: 'The Odoo screen is still loading or unavailable.',
+					})
 					break
 				}
 				void guideController
 					.getBrowserState()
 					.then((state) => {
-						if (window.location.href !== startedUrl)
-							throw new Error('Odoo navigated during inspection. Inspect again.')
+						if (
+							window.location.href !== startedUrl ||
+							JSON.stringify(readOdooContext(document, new URL(startedUrl))) !==
+								JSON.stringify(context)
+						)
+							throw new GuideSelectionError(
+								'Odoo navigated during inspection. Inspect again.',
+								'STALE_SNAPSHOT'
+							)
 						const id = crypto.randomUUID()
 						const controls = state.content.slice(0, 18000)
 						const allIndices = indexedControls(state.content)
@@ -115,7 +165,18 @@ export function initPageController() {
 							guideController.getIndexedElement(index)
 						)
 						const fields = collectOdooFieldTargets(document, firstExtraIndex, indexedElements)
-						guideExtraTargets = new Map(fields.map((field) => [field.index, field.element]))
+						guideExtraTargets = new Map(fields.map((field) => [field.index, field]))
+						guideTargetKeys = new Map([
+							...[...allIndices].map((index): [number, string] => [
+								index,
+								guideTargetKey(guideController.getIndexedElement(index)),
+							]),
+							...fields.map((field): [number, string] => [
+								field.index,
+								guideTargetKey(field.element),
+							]),
+						])
+						guideContextKey = JSON.stringify(context)
 						guideSnapshot = {
 							id,
 							url: window.location.href,
@@ -141,12 +202,7 @@ export function initPageController() {
 							footer: state.footer,
 						})
 					})
-					.catch((error: unknown) =>
-						sendResponse({
-							success: false,
-							error: error instanceof Error ? error.message : String(error),
-						})
-					)
+					.catch((error: unknown) => sendResponse(guideError(error)))
 				break
 			}
 			case 'guide_highlight': {
@@ -161,8 +217,8 @@ export function initPageController() {
 					)
 					if (typeof request?.label !== 'string' || typeof request.instruction !== 'string')
 						throw new Error('Invalid highlight request')
-					const element = guideExtraTargets.get(index) ?? guideController.getIndexedElement(index)
-					if (!element.isConnected) throw new Error('The selected control is no longer on screen')
+					const element = resolveGuideTarget(index)
+					assertCurrentGuideTarget(index, element)
 					const rect = element.getBoundingClientRect()
 					const style = getComputedStyle(element)
 					if (
@@ -171,7 +227,7 @@ export function initPageController() {
 						style.visibility === 'hidden' ||
 						style.display === 'none'
 					)
-						throw new Error('The selected control is not visible')
+						throw new GuideSelectionError('The selected control is not visible', 'STALE_SNAPSHOT')
 					const label = request.label
 						.replace(/\[\d+\]/g, '')
 						.trim()
@@ -187,6 +243,8 @@ export function initPageController() {
 						() => {
 							guideSnapshot = null
 							guideExtraTargets.clear()
+							guideTargetKeys.clear()
+							guideContextKey = ''
 							void chrome.runtime
 								.sendMessage({ type: 'PODOO_GUIDE_TARGET_USED' })
 								.catch(() => undefined)
@@ -199,11 +257,53 @@ export function initPageController() {
 					)
 					sendResponse({ success: true, label, instruction })
 				} catch (error) {
-					sendResponse({
-						success: false,
-						error: error instanceof Error ? error.message : String(error),
-					})
+					sendResponse(guideError(error))
 				}
+				break
+			}
+			case 'guide_act': {
+				const request = payload?.[0] as
+					| { snapshotId?: string; index?: number; action?: 'click' | 'input'; text?: string }
+					| undefined
+				void (async () => {
+					try {
+						const index = assertHighlightSelection(
+							guideSnapshot,
+							request,
+							window.location.href,
+							Date.now()
+						)
+						if (request?.action !== 'click' && request?.action !== 'input')
+							throw new Error('Invalid voice action')
+						if (guideExtraTargets.get(index)?.kind === 'column')
+							throw new GuideSelectionError(
+								'This column heading is informational. Choose an interactive control or field.',
+								'INVALID_TARGET'
+							)
+						const element = resolveGuideTarget(index)
+						assertCurrentGuideTarget(index, element)
+						const target = assertVoiceActionTarget(element, request.action, request.text)
+						const rect = target.getBoundingClientRect()
+						const style = getComputedStyle(target)
+						if (
+							rect.width < 1 ||
+							rect.height < 1 ||
+							style.visibility === 'hidden' ||
+							style.display === 'none'
+						)
+							throw new GuideSelectionError('The control is no longer visible', 'STALE_SNAPSHOT')
+						guideOverlay.clear()
+						guideSnapshot = null
+						guideExtraTargets.clear()
+						guideTargetKeys.clear()
+						guideContextKey = ''
+						if (request.action === 'click') await clickDomElement(target)
+						else await inputDomText(target, request.text ?? '')
+						sendResponse({ success: true, acted: true, action: request.action })
+					} catch (error) {
+						sendResponse(guideError(error))
+					}
+				})()
 				break
 			}
 			case 'get_odoo_context':

@@ -22,6 +22,13 @@ describe('live guidance pacing', () => {
 		expect(plan.response.output_modalities).toEqual(['text'])
 		expect(plan.response.tool_choice).toBe('required')
 		expect(plan.response.tools).toHaveLength(1)
+		expect(plan.response.tools[0].parameters.properties.mode.enum).toEqual([
+			'guide',
+			'explain',
+			'click',
+			'input',
+		])
+		expect(plan.response.tools[0].parameters.properties.text).toBeDefined()
 		expect(JSON.stringify(plan)).toContain('screen-1')
 		const spoken = speakRealtimeGuidance('Haz clic en Empleados.')
 		expect(spoken.response.output_modalities).toEqual(['audio'])

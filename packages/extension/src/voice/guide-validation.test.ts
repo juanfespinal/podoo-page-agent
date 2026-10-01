@@ -1,6 +1,12 @@
+// @vitest-environment happy-dom
 import { describe, expect, it } from 'vitest'
 
-import { assertHighlightSelection, indexedControls } from './guide-validation'
+import {
+	GuideSelectionError,
+	assertHighlightSelection,
+	guideTargetKey,
+	indexedControls,
+} from './guide-validation'
 
 describe('live voice guide target validation', () => {
 	const screen = {
@@ -37,5 +43,28 @@ describe('live voice guide target validation', () => {
 		expect(() =>
 			assertHighlightSelection(screen, { snapshotId: 'screen-1', index: 2 }, screen.url, 62000)
 		).toThrow('changed or expired')
+	})
+
+	it('marks navigation or expiry as a recoverable stale screen', () => {
+		expect.assertions(2)
+		try {
+			assertHighlightSelection(
+				screen,
+				{ snapshotId: 'screen-1', index: 2 },
+				'https://odoo.example/odoo/sales/new',
+				2000
+			)
+		} catch (error) {
+			expect(error).toBeInstanceOf(GuideSelectionError)
+			expect((error as GuideSelectionError).code).toBe('STALE_SNAPSHOT')
+		}
+	})
+
+	it('detects a control repurposed without changing its URL', () => {
+		const button = document.createElement('button')
+		button.textContent = 'Nuevo'
+		const original = guideTargetKey(button)
+		button.textContent = 'Eliminar'
+		expect(guideTargetKey(button)).not.toBe(original)
 	})
 })

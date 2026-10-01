@@ -12,15 +12,19 @@ export const guidanceDecisionTool = {
 	type: 'function',
 	name: 'choose_odoo_response',
 	description:
-		'Choose the next response. For a workflow, select one visible control or field and give one short instruction. For a conceptual question, answer without selecting a control.',
+		'Choose one next step from the live Odoo screen: guide the person, answer, click a routine control, or enter text in a field.',
 	parameters: {
 		type: 'object',
 		properties: {
-			mode: { type: 'string', enum: ['guide', 'explain'] },
+			mode: { type: 'string', enum: ['guide', 'explain', 'click', 'input'] },
 			speech: { type: 'string', description: 'The Spanish answer for explain mode only.' },
-			snapshot_id: { type: 'string', description: 'The current snapshot ID when guiding.' },
+			snapshot_id: {
+				type: 'string',
+				description: 'The current snapshot ID for guide, click or input.',
+			},
 			index: { type: 'integer', description: 'Internal index of the visible target.' },
 			label: { type: 'string', description: 'Short visible name of the target.' },
+			text: { type: 'string', description: 'The exact value to enter in input mode.' },
 			instruction: {
 				type: 'string',
 				description: 'One actionable Spanish instruction, at most 18 words.',
@@ -54,7 +58,9 @@ export function planRealtimeGuidance(screen: OdooScreenInspection & { success: t
 			instructions: [
 				'Elige la siguiente respuesta mediante choose_odoo_response. No generes un mensaje aparte.',
 				'La pantalla de Odoo ya se leyó correctamente. Nunca digas que no puedes verla; si no encuentras el control, describe la vista disponible y el dato que falta.',
-				'Si pidió ayuda para usar Odoo, modo guide: elige un solo índice visible y proporciona snapshot_id, index, label e instruction. La instrucción debe tener máximo 18 palabras. No digas que vas a mirar, comprobar o averiguar.',
+				'Si pidió orientación para usar Odoo, modo guide: elige un solo índice visible y proporciona snapshot_id, index, label e instruction. La instrucción debe tener máximo 18 palabras. No digas que vas a mirar, comprobar o averiguar.',
+				'Si pidió que tú realices el trabajo en Odoo, usa click para un control rutinario visible o input para un campo editable visible. Proporciona snapshot_id e index; para input también text exacto. Elige solo una acción por decisión y observa la pantalla de nuevo después. No narres cada clic ni pidas permiso para pasos rutinarios.',
+				'Nunca uses click para enviar, confirmar, aprobar, validar, publicar, pagar, facturar, borrar, archivar o cancelar. Para esas acciones usa guide y explica brevemente que la persona debe hacer el clic final. No inventes valores de campos; pide el dato indispensable.',
 				'Si hizo una pregunta conceptual sin pedir un paso en la interfaz, modo explain: proporciona speech con la respuesta directa y sin índice.',
 				'Si la pantalla no ofrece el control necesario, modo explain: explica concretamente qué falta sin inventar una ruta.',
 				'Nunca pronuncies índices. Un encabezado puede ser informativo y no necesariamente clicable.',
